@@ -64,3 +64,29 @@ Whisper Tiny/Base/Small đa ngôn ngữ chạy trong Web Worker bằng Transform
 Chọn nguồn gốc của một clip để giữ phần cắt và vị trí timeline mặc định. AI đọc âm thanh gốc của nguồn, kể cả clip đang tắt tiếng, không trộn các track khác. Beat không còn giọng hát không thể dùng để lấy lời. Bài hát có thể bị nhận sai hoặc lệch nhịp; kiểm tra kết quả và sửa các mốc từ trong bảng karaoke. Trình duyệt không đọc được âm thanh trong video sẽ hướng dẫn dùng thêm bản MP3/WAV có giọng. Nút dừng hủy công việc và giữ timeline; đóng hộp thoại giải phóng bộ nhớ mô hình.
 
 Tài liệu thư viện: https://huggingface.co/docs/transformers.js/v3.8.1/en/installation . Đã kiểm tra nhận diện thực tế trên mẫu âm thanh 5 giây với Whisper Tiny q8, backend CPU trong Node và cùng tùy chọn mốc từng từ. Cả 28 kiểm tra tự động đạt, gồm ánh xạ đoạn âm thanh vào timeline, sửa/xóa câu, mốc thiếu/chồng và hoàn tác cả đợt. Chưa kiểm thử đầu-cuối trên trình duyệt, đọc codec video hoặc WASM trong trình duyệt ở phiên này.
+
+## Lyrics có sẵn, API và model trên máy
+
+Trong **Tạo lời bằng AI**, chọn một trong ba cách:
+
+- **AI tự nghe**: tạo nội dung và mốc từ như trước.
+- **Đã có lyrics**: dán lời hoặc nhập TXT, mỗi câu một dòng, chỉ gồm lời của đoạn âm thanh đang chọn. Giữ nguyên nội dung và cách chia câu. Ứng dụng nhận diện âm thanh rồi khớp chuỗi từ theo thứ tự, kể cả điệp khúc lặp; từ thiếu/khác được nội suy và đánh dấu để nghe lại. Đây là khớp với bản nhận diện, chưa phải forced alignment âm vị. Không đảm bảo tuyệt đối với giọng hát/ngân hoặc nhạc nền lớn.
+- **Nhập SRT/LRC có mốc**: giữ mốc câu, không chạy AI. Mốc tính từ đầu tệp nguồn, được cắt theo Từ–Đến và dịch tới vị trí Chèn trên timeline. LRC hỗ trợ nhiều timestamp trên một dòng, offset và mốc trống kết thúc câu; câu cuối không có mốc kết thúc dùng cuối đoạn chọn. Mốc từng từ được chia đều và đánh dấu ước lượng. Các câu chồng nhau bị từ chối để sửa trước khi chèn.
+
+Kết quả nghe mới nhất được giữ trong tab: sửa lyrics/chia câu/vị trí chèn rồi bấm lại sẽ dùng mốc đã có. Đổi nguồn, đoạn, model, ngôn ngữ hoặc nơi chạy sẽ nhận diện lại. Lyrics có sẵn giúp giảm thời gian sửa nội dung; không tự làm model nghe nhanh hơn.
+
+### Nơi chạy
+
+| Lựa chọn | Cách dùng | Dữ liệu |
+| --- | --- | --- |
+| Trình duyệt | Tiny/Base/Small, không cần key | Âm thanh ở trên thiết bị; tải model từ Hugging Face |
+| Groq API | Whisper Large V3 Turbo hoặc Large V3; tạo key riêng tại https://console.groq.com/keys | Chỉ đoạn âm thanh đã chọn gửi thẳng tới Groq ở dạng WAV 16 kHz mono; không gửi video gốc hoặc lyrics |
+| Trên máy | Cài [bộ Faster Whisper local](tools/local-ai/README.md), nhập địa chỉ và mã kết nối | Âm thanh gửi tới localhost, dùng CPU int8 hoặc GPU NVIDIA |
+
+Groq có free tier theo hạn mức; xem https://console.groq.com/docs/rate-limits và gói tài khoản của bạn. Không dùng key công khai của người khác. Nếu đã bật gói tính phí, phí phụ thuộc gói đó. Key chỉ giữ trong ô nhập của tab, không lưu localStorage, source hay lịch sử dự án. Không có key của nhà phát triển nhúng sẵn.
+
+Bộ local có launcher Windows; hướng dẫn CPU/GPU, macOS/Linux và xử lý chặn localhost ở `tools/local-ai/README.md`. Key Groq và mã local có ô riêng. Cổng mặc định 8766, chỉ cho phép địa chỉ loopback và origin editor được cấu hình. Có nút kiểm tra kết nối. Dừng nhận diện ngừng chờ phía trình duyệt; công việc đã gửi tới Groq/local có thể vẫn chạy.
+
+Kiểm tra bổ sung: nhập phụ đề và dịch mốc, điệp khúc lặp, tiếng Việt thiếu dấu, từ nghe sai/thiếu, WAV PCM16, request API/mốc từng từ, key và localhost, hạn mức, xác thực/origin/kích thước của bộ local. `node --test tests/*.test.mjs` và `python -m unittest discover -s tests -p 'test_*.py'`. Kết nối Groq được kiểm tra CORS và hợp đồng request bằng mock; chưa chạy nhận diện với key thật của người dùng. Chưa có kiểm thử đầu-cuối trên trình duyệt hoặc GPU Windows.
+
+Đã chạy nhận diện thực tế mẫu âm thanh 5 giây với Faster Whisper Tiny trên CPU int8, trả về từ và mốc hợp lệ. Bộ cài giới hạn `av<19` vì Faster Whisper 1.2.1 chưa tương thích thay đổi `metadata_errors` của PyAV 19. Tổng cộng 41 kiểm tra JavaScript và 5 kiểm tra Python đạt.

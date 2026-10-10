@@ -48,8 +48,8 @@ export function cuesToClips(cues, insertAt, makeId, style = null) {
   return activeCues.map((cue,index) => {
     const clip = createTextClip(ms(insertAt + cue.start), makeId());
     const next = activeCues[index + 1];
-    const end = Math.min(cue.end + .12, next?.start ?? Infinity);
-    clip.text = cue.text; clip.duration = ms(Math.max(.2, end - cue.start));
+    const end = Math.min(cue.end + (cue.timingSource === 'subtitle' ? 0 : .12), next?.start ?? Infinity);
+    clip.text = cue.text; clip.duration = ms(Math.max(cue.timingSource === 'subtitle' ? .002 : .2, end - cue.start));
     if (style) clip.style = structuredClone(style);
     clip.karaoke.mode='words'; clip.karaoke.delay=0; clip.karaoke.speed=1;
     clip.karaoke.words=cue.words.map(w=>({word:w.word,start:ms(w.start-cue.start),end:ms(w.end-cue.start)}));
