@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111318">
+  <title>Video Studio — Dựng video & karaoke</title>
+  <meta name="description" content="Biên tập video, ảnh, âm thanh và lời karaoke với màu chạy theo từng từ.">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <svg class="svg-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-text" viewBox="0 0 24 24"><path d="M4 5h16M12 5v15M8 20h8"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14" stroke-width="3"/></symbol>
+    <symbol id="i-scissors" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="m8.3 8.3 11 11M8.3 15.7l11-11"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4ZM17 9a5 5 0 0 1 0 6M20 6a9 9 0 0 1 0 12"/></symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4Zm13 0 5 6m0-6-5 6"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-3v10l-4-3"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1"/><path d="m4 17 5-5 3 3 3-4 5 6"/></symbol>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 17V5l11-2v12M9 8l11-2"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 17v3h16v-3"/></symbol>
+    <symbol id="i-zoom" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark"><span></span><span></span></span><span>frame<span class="brand-accent">flow</span></span></div>
+      <div class="project-heading"><span class="crumb">Không gian làm việc</span><svg class="icon"><use href="#i-chevron"/></svg><input id="project-name" aria-label="Tên dự án" value="Dự án mới" maxlength="60"><span class="saved-indicator">● Chỉ lưu trong phiên này</span></div>
+      <div class="top-actions"><span class="shortcut-hint">Phím cách để phát / tạm dừng</span><button id="export-button" class="button button-primary"><svg class="icon"><use href="#i-download"/></svg><span>Xuất video</span></button></div>
+    </header>
+
+    <main class="workspace">
+      <aside class="media-panel panel">
+        <div class="panel-heading"><div><span class="eyebrow">TÀI NGUYÊN</span><h2>Thư viện media</h2></div><span id="asset-count" class="count-pill">0</span></div>
+        <label class="upload-zone" id="upload-zone" for="file-input"><span class="upload-icon"><svg class="icon"><use href="#i-plus"/></svg></span><strong>Thêm tệp của bạn</strong><span>Kéo thả video, ảnh hoặc âm thanh vào đây</span><span class="upload-format">MP4 · MOV · JPG · PNG · MP3 · WAV</span></label>
+        <input id="file-input" type="file" accept="video/*,image/*,audio/*" multiple hidden>
+        <div class="library-title"><span>Tệp đã tải lên</span><span id="library-help">Nhấn + để thêm vào timeline</span></div>
+        <div id="asset-list" class="asset-list"><div class="empty-library"><span class="empty-orbit"><svg class="icon"><use href="#i-video"/></svg></span><strong>Chưa có tệp nào</strong><p>Tải media lên để bắt đầu tạo video của bạn.</p></div></div>
+        <div class="privacy-note"><span class="privacy-dot"></span>Tệp được xử lý ngay trên thiết bị của bạn</div>
+      </aside>
+
+      <section class="stage-panel">
+        <div class="stage-topline"><div><span class="eyebrow">XEM TRƯỚC</span><span class="stage-label">Khung hình 16:9</span></div><span class="stage-resolution">Xuất 1280 × 720</span></div>
+        <div class="stage-wrap"><div id="stage" class="stage"><div id="stage-placeholder" class="stage-placeholder"><div class="stage-illustration"><span class="illustration-frame frame-one"></span><span class="illustration-frame frame-two"></span><span class="illustration-play"><svg class="icon"><use href="#i-play"/></svg></span></div><h1>Ý tưởng của bạn bắt đầu tại đây</h1><p>Thêm video hoặc ảnh vào timeline để xem trước thành phẩm.</p><button id="stage-add" class="button button-light"><svg class="icon"><use href="#i-plus"/></svg>Thêm media</button></div><video id="preview-video" playsinline preload="metadata"></video><img id="preview-image" alt="Ảnh trong video"></div></div>
+        <div class="transport"><span id="time-display" class="time-display">00:00 / 00:00</span><div class="transport-center"><button id="back-button" class="icon-button" aria-label="Lùi 5 giây">↶</button><button id="play-button" class="play-button" aria-label="Phát"><svg class="icon"><use href="#i-play"/></svg></button><button id="forward-button" class="icon-button" aria-label="Tiến 5 giây">↷</button></div><button id="global-mute" class="icon-button sound-button" aria-label="Tắt tiếng toàn bộ" title="Tắt tiếng toàn bộ"><svg class="icon"><use href="#i-volume"/></svg></button></div>
+      </section>
+
+      <aside class="inspector-panel panel"><div class="panel-heading"><div><span class="eyebrow">CHỈNH SỬA</span><h2>Thuộc tính</h2></div></div><div id="inspector-empty" class="inspector-empty"><div class="inspector-empty-icon"><svg class="icon"><use href="#i-scissors"/></svg></div><strong>Chọn một clip</strong><p>Chọn clip hoặc nhấn Thêm chữ để căn lời và chỉnh màu karaoke.</p></div><div id="inspector-content" class="inspector-content" hidden><div class="selected-media"><span id="selected-icon" class="selected-icon"></span><div><strong id="selected-name"></strong><span id="selected-type"></span></div></div><div class="inspector-divider"></div><div class="property-section"><div class="property-heading"><span>Thời gian trên timeline</span><span class="property-badge">GIÂY</span></div><label class="input-label" for="clip-start">Bắt đầu tại</label><div class="number-wrap"><input id="clip-start" type="number" min="0" step="0.1"><span>s</span></div><div class="input-grid"><div><label class="input-label" for="trim-in">Cắt đầu</label><div class="number-wrap"><input id="trim-in" type="number" min="0" step="0.1"><span>s</span></div></div><div><label class="input-label" for="trim-out">Cắt cuối</label><div class="number-wrap"><input id="trim-out" type="number" min="0" step="0.1"><span>s</span></div></div></div><p class="input-hint">Kéo mốc thời gian rồi nhấn Cắt để chia clip.</p></div><div id="audio-property" class="property-section"><div class="property-heading"><span>Âm thanh</span></div><button id="clip-mute" class="mute-row"><span class="mute-row-left"><svg class="icon"><use href="#i-volume"/></svg><span>Âm thanh clip</span></span><span id="mute-switch" class="toggle-switch"><span></span></span></button><label class="input-label volume-label" for="clip-volume">Âm lượng <span id="volume-value">100%</span></label><input id="clip-volume" type="range" min="0" max="100" value="100"></div><button id="delete-inspector" class="delete-link"><svg class="icon"><use href="#i-trash"/></svg>Xóa clip khỏi timeline</button></div></aside>
+
+      <section class="timeline-panel"><div class="timeline-toolbar"><div class="timeline-title"><span class="eyebrow">DỰ ÁN</span><strong>Timeline</strong><span id="clip-count" class="timeline-count">0 clip</span></div><div class="edit-actions"><button id="undo-button" class="toolbar-button" disabled title="Hoàn tác (Ctrl+Z)" aria-label="Hoàn tác (Ctrl+Z)">↶</button><button id="redo-button" class="toolbar-button" disabled title="Làm lại (Ctrl+Y / Ctrl+Shift+Z)" aria-label="Làm lại (Ctrl+Y)">↷</button><button id="shortcuts-button" class="toolbar-button" title="Danh sách phím tắt (?)" aria-label="Danh sách phím tắt">⌨</button><button id="split-button" class="toolbar-button" disabled title="Cắt clip tại vị trí con trỏ"><svg class="icon"><use href="#i-scissors"/></svg><span>Cắt</span></button><button id="delete-button" class="toolbar-button" disabled title="Xóa clip đã chọn"><svg class="icon"><use href="#i-trash"/></svg><span>Xóa</span></button><span class="toolbar-separator"></span><svg class="icon zoom-icon"><use href="#i-zoom"/></svg><input id="zoom-slider" type="range" min="24" max="110" value="52" aria-label="Thu phóng timeline"></div></div><div id="timeline-scroll" class="timeline-scroll"><div id="timeline-canvas" class="timeline-canvas"><div id="ruler" class="ruler"></div><div id="video-track" class="track"><div class="track-label"><svg class="icon"><use href="#i-video"/></svg><span>Video & ảnh</span></div><div class="track-content" data-track="visual"></div></div><div id="audio-track" class="track"><div class="track-label"><svg class="icon"><use href="#i-music"/></svg><span>Âm thanh</span></div><div class="track-content" data-track="audio"></div></div><div id="playhead" class="playhead"><span class="playhead-handle"></span></div></div></div><div class="timeline-footer"><span><span class="footer-dot"></span> Mẹo: nhấn vào tệp để thêm · kéo clip để di chuyển</span><span id="timeline-duration">Tổng thời lượng 00:00</span></div></section>
+    </main>
+  </div>
+  <dialog id="shortcuts-dialog" class="shortcuts-dialog"><div class="shortcuts-heading"><h2>Phím tắt biên tập</h2><button id="close-shortcuts" class="icon-button" aria-label="Đóng phím tắt">×</button></div><dl class="shortcut-list"><dt>Ctrl + Z</dt><dd>Hoàn tác</dd><dt>Ctrl + Y / Ctrl + Shift + Z</dt><dd>Làm lại</dd><dt>Delete / Backspace</dt><dd>Xóa clip đang chọn</dd><dt>Ctrl + D</dt><dd>Nhân đôi clip</dd><dt>T</dt><dd>Thêm chữ tại con trỏ</dd><dt>S</dt><dd>Chia clip tại con trỏ</dd><dt>Space</dt><dd>Phát / tạm dừng</dd><dt>← / →</dt><dd>Lùi / tiến 1 khung hình</dd><dt>Shift + ← / →</dt><dd>Lùi / tiến 1 giây</dd><dt>Home / End</dt><dd>Đầu / cuối dự án</dd><dt>?</dt><dd>Mở bảng phím tắt</dd></dl><p>Nhấn vào clip trên timeline để chọn. Khi đang nhập chữ, Delete và mũi tên dùng để sửa chữ. Ctrl+Z trong ô lời hoàn tác nội dung; trong các ô nhập số, dùng hoàn tác của ô nhập. Trên Mac dùng ⌘ thay Ctrl.</p></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <dialog id="export-dialog" class="export-dialog"><div class="export-header"><div class="export-icon"><svg class="icon"><use href="#i-download"/></svg></div><button id="close-export" class="icon-button" aria-label="Đóng">×</button></div><h2>Xuất video của bạn</h2><p id="export-message">Video WebM 720p kèm chữ và hiệu ứng karaoke, được tạo theo thời gian thực ngay trên thiết bị.</p><div class="export-progress"><span id="export-progress-bar"></span></div><div class="export-meta"><span id="export-status">Sẵn sàng</span><span id="export-percent">0%</span></div><div class="export-actions"><button id="cancel-export" class="button button-ghost">Hủy</button><button id="start-export" class="button button-primary">Bắt đầu xuất</button></div></dialog>
+</body>
+</html>
