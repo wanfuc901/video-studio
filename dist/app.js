@@ -1,6 +1,7 @@
 import { setupAILyrics } from './ai-lyrics-ui.js';
 import { EditHistory, fitStage, revealTimeline, shortcutFor } from './editor-tools.js';
-import { drawTextClips } from './karaoke.js';
+import { drawTextClips, createTextClip, distributeWords } from './karaoke.js';
+import { setupAIAgent } from './ai-agent.js';
 import { setupKaraoke } from './karaoke-ui.js';
 const IMAGE_DURATION = 5;
 const MAX_IMAGE_DURATION = 120;
@@ -720,7 +721,50 @@ function bindEvents() {
   window.addEventListener('beforeunload', () => { for (const asset of state.assets.values()) URL.revokeObjectURL(asset.url); state.audioGraph?.context.close(); });
 }
 
+function agentContext() {
+  return { projectName: elements['project-name'].value, playhead: state.playhead,
+    selectedId: state.selectedId, duration: projectDuration(),
+    clips: state.clips.slice(0, 120).map((clip) => ({
+      id: clip.id, track: clip.track, start: clip.start, duration: clip.duration,
+      text: clip.track === 'text' ? (clip.text || '').slice(0, 300) : undefined,
+      assetName: clip.track !== 'text' ? getAsset(clip)?.file?.name?.slice(0, 120) : undefined
+    })) };
+}
+function applyAgentActions(actions) {
+  if (state.exporting || state.drag) throw new Error('Không thể sửa khi đang xuất hoặc kéo clip.');
+  if (actions.some(a => a.type === 'move_selected') && !getSelectedClip()) throw new Error('Hãy chọn clip trước khi dời.');
+  if (state.clips.length + actions.filter(a => a.type === 'add_text').length > 500)
+    throw new Error('Timeline có quá nhiều clip.');
+  pausePlayback();
+  const previous = snapshotProject();
+  try {
+    for (const action of actions) {
+      if (action.type === 'rename_project') elements['project-name'].value = action.title;
+      else if (action.type === 'seek') state.playhead = action.seconds;
+      else if (action.type === 'move_selected') getSelectedClip().start = action.seconds;
+      else if (action.type === 'add_text') {
+        const clip = createTextClip(action.start, crypto.randomUUID());
+        clip.text = action.text;
+        clip.duration = action.duration;
+        clip.karaoke.sweepDuration = Math.max(0.01, action.duration - clip.karaoke.delay);
+        clip.karaoke.words = distributeWords(clip.text, clip.karaoke.sweepDuration);
+        clip.karaoke.points = [{ time: 0, progress: 0 }, { time: clip.karaoke.sweepDuration, progress: 100 }];
+        state.clips.push(clip);
+        state.selectedId = clip.id;
+      }
+    }
+    state.playhead = clamp(state.playhead, 0, projectDuration());
+    renderAll(); revealClip(getSelectedClip()); showToast('AI Agent đã áp dụng ' + actions.length + ' thao tác.');
+  } catch (error) {
+    state.clips = previous.data.clips;
+    elements['project-name'].value = previous.data.projectName;
+    state.selectedId = previous.view.selectedId; state.playhead = previous.view.playhead;
+    renderAll(); throw error;
+  }
+}
+
 const karaokeUI = setupKaraoke({ state, elements, renderAll, renderTimeline, syncPreview, seekTo, startPlayback, pausePlayback, showToast, getSelectedClip, recordEdit, revealClip, duplicateSelectedClip });
 setupAILyrics({ state, elements, getSelectedClip, pausePlayback, renderAll, revealClip, showToast });
 bindEvents();
+setupAIAgent({ getContext: agentContext, applyActions: applyAgentActions });
 renderAll();
