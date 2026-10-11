@@ -11,7 +11,7 @@ function harness(loaded) {
   const shell={},state={assets:new Map(),clips:[]},statuses=[],calls=[];
   const store={async load(){return structuredClone(loaded);},async write(){calls.push('write');return 'new';}};
   const context=vm.createContext({state,elements,File,URL,Map,Image:class{async decode(){}},SessionAutosaver,projectRecord,EditHistory,
-    sessionAutosaver:null,restoringSession:true,document:{querySelector:()=>shell,getElementById:()=>({})},
+    sessionAutosaver:null,restoringSession:true,AUTOSAVE_DELAY_MS:0,document:{querySelector:()=>shell,getElementById:()=>({})},
     createSessionStore:()=>store,clamp:(n,a,b)=>Math.max(a,Math.min(n,b)),projectDuration:()=>state.clips.reduce((n,c)=>Math.max(n,c.start+c.duration),0),
     snapshotProject:()=>({data:{clips:state.clips,projectName:elements['project-name'].value,globalMute:state.globalMute},view:{playhead:state.playhead,selectedId:state.selectedId}}),
     updateExportSettings(){calls.push('export-settings');},updateGlobalMuteButton(){},renderAssets(){calls.push('assets');},renderAll(){calls.push('render');},

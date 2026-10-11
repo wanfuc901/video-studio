@@ -10,7 +10,7 @@ export function assetRecord(asset) {
 export function projectRecord({state,projectName,history,aiDraft,scrollLeft=0,scrollTop=0}) {
   return structuredClone({ version:VERSION, projectName, clips:state.clips, assetIds:[...state.assets.keys()],
     selectedId:state.selectedId, playhead:state.playhead, zoom:state.zoom, globalMute:state.globalMute,
-    previewSpeed:state.previewSpeed, exportResolution:state.exportSettings.height===720?'720':'1080',
+    previewSpeed:state.previewSpeed, exportResolution:state.exportSettings.height===720?'720':'1080', beats:state.beats||[],
     scrollLeft,scrollTop, aiDraft,
     history:{current:history.current,past:history.past,future:history.future} });
 }
@@ -75,16 +75,19 @@ export function createSessionStore(indexedDB = globalThis.indexedDB) {
   };
 }
 export class SessionAutosaver {
-  constructor({store,snapshot,assets,onStatus=()=>{},revision=null,assetIds=[]}) {
-    Object.assign(this,{store,snapshot,assets,onStatus,revision});
-    this.known=new Set(assetIds);this.wanted=0;this.saved=0;this.running=null;this.failed=null;this.scheduled=false;
+  // delayMs>0 coalesces bursts (typing, scrolling, wheel) into one IndexedDB write; flush() writes immediately.
+  constructor({store,snapshot,assets,onStatus=()=>{},revision=null,assetIds=[],delayMs=0}) {
+    Object.assign(this,{store,snapshot,assets,onStatus,revision,delayMs});
+    this.known=new Set(assetIds);this.wanted=0;this.saved=0;this.running=null;this.failed=null;this.scheduled=false;this.timer=null;
   }
   get pending(){return this.wanted>this.saved;}
   schedule() {
     this.wanted++;this.onStatus('saving');
+    if(this.delayMs>0){clearTimeout(this.timer);this.timer=setTimeout(()=>{this.timer=null;void this.flush();},this.delayMs);return;}
     if(!this.scheduled){this.scheduled=true;queueMicrotask(()=>{this.scheduled=false;void this.flush();});}
   }
   flush() {
+    if(this.timer){clearTimeout(this.timer);this.timer=null;}
     if(this.running)return this.running;
     if(this.failed?.name==='SessionConflictError') {this.onStatus('error',this.failed);return Promise.resolve(false);}
     this.running=this.drain().finally(()=>{this.running=null;});return this.running;

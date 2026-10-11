@@ -81,3 +81,26 @@ test('shortcuts work after button focus but protect typing, IME and modal dialog
   assert.equal(shortcutFor(event('d',{ctrlKey:true})),'duplicate');
   assert.equal(shortcutFor(event('ArrowRight',{shiftKey:true})),'next-second');
 });
+
+test('undo history shares unchanged clips so stored sessions do not grow with every step', async () => {
+  const { serialize } = await import('node:v8');
+  const clips = Array.from({ length: 300 }, (_, i) => createTextClip(i * 4, `line-${i}`));
+  const h = new EditHistory(snapshot(clips));
+  for (let step = 0; step < 100; step++) { clips[step % 300].start += .01; h.record(snapshot(clips)); }
+  const stored = serialize({ current: h.current, past: h.past });
+  const single = serialize(h.current);
+  // Without sharing this would be ~100x one snapshot; with sharing only the edited clips are new.
+  assert.ok(stored.length < single.length * 3, `history ${stored.length} bytes vs snapshot ${single.length}`);
+  const restored = structuredClone({ past: h.past });
+  assert.equal(restored.past[1].data.clips[200], restored.past[2].data.clips[200]);
+  assert.equal(h.undo().data.clips[99].start, 99 * 4);
+});
+
+test('timeline virtualization keeps one screen of overscan and filters clips by time', async () => {
+  const { visibleTimeRange, clipInRange } = await import('../dist/editor-tools.js');
+  const range = visibleTimeRange({ scrollLeft: 146 + 100 * 50, viewportWidth: 1000, zoom: 50 });
+  assert.deepEqual(range, { start: 80, end: 140 });
+  assert.equal(clipInRange({ start: 70, duration: 11 }, range), true);
+  assert.equal(clipInRange({ start: 140, duration: 3 }, range), false);
+  assert.equal(visibleTimeRange({ scrollLeft: 0, viewportWidth: 1000, zoom: 50 }).start, 0);
+});

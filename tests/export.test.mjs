@@ -11,25 +11,25 @@ function harness(resolution='1080',wait=false,fail=false) {
  class Stream {constructor(tracks){this.tracks=tracks;}getVideoTracks(){return this.tracks.filter(t=>t.kind==='video');}getAudioTracks(){return this.tracks.filter(t=>t.kind==='audio');}addTrack(t){this.tracks.push(t);}}
  class Recorder {static isTypeSupported(){return true;}constructor(stream,opts){this.stream=stream;this.options=opts;this.state='inactive';}start(){if(fail)throw new Error('Encoder unavailable');this.state='recording';}stop(){this.state='inactive';this.onstop();}}
  const audioReady=wait?new Promise(r=>release=()=>r(new Stream([audio]))):Promise.resolve(new Stream([audio]));
- const canvas={getContext:()=>({fillRect(){}}),captureStream(fps){this.fps=fps;return new Stream([video]);}};
+ const canvas={getContext:()=>({fillRect(){},drawImage(){}}),captureStream(fps){this.fps=fps;return new Stream([video]);}};
  const context=vm.createContext({state,elements,exportPreset,MediaStream:Stream,MediaRecorder:Recorder,window:{MediaRecorder:Recorder,AudioContext:class{}},HTMLCanvasElement:{prototype:{captureStream(){}}},document:{querySelector:()=>shell,createElement:()=>canvas},projectDuration:()=>5,pausePlayback(){},seekTo(t){state.playhead=t;},startPlayback(){started++;},showToast(){},setExportProgress(){},activeVisualClip:()=>null,drawTextClips:(ctx,clips,t,w,h)=>{drawSize=[w,h];},audioReady});
- vm.runInContext(source.slice(source.indexOf('function getExportMimeType()'),source.indexOf('function bindEvents()')),context);
+ vm.runInContext(source.slice(source.indexOf('const EXPORT_BACKGROUND'),source.indexOf('function bindEvents()')),context);
  vm.runInContext('ensureAudioGraph = () => audioReady;',context);
  return {context,state,elements,canvas,video,shell,release,get started(){return started;},get drawSize(){return drawSize;}};
 }
 test('export pipeline records true 1920x1080 frames, scaled text, 30 fps and 12 Mbps',async()=>{
- const h=harness();await h.context.startExport();
+ const h=harness();await h.context.startRealtimeExport();
  assert.equal(h.canvas.width,1920);assert.equal(h.canvas.height,1080);assert.equal(h.canvas.fps,30);assert.deepEqual(h.drawSize,[1920,1080]);
  assert.equal(h.state.recorder.options.videoBitsPerSecond,12000000);assert.equal(h.state.recorder.stream.getAudioTracks().length,1);assert.ok(h.elements['export-resolution'].disabled);
  h.context.stopExport(true);assert.ok(h.video.stopped);assert.equal(h.state.exporting,false);assert.equal(h.elements['export-resolution'].disabled,false);
 });
 test('720p option uses matching frame dimensions and bitrate',async()=>{
- const h=harness('720');await h.context.startExport();assert.equal(h.canvas.width,1280);assert.equal(h.canvas.height,720);assert.equal(h.state.recorder.options.videoBitsPerSecond,6000000);h.context.stopExport(true);
+ const h=harness('720');await h.context.startRealtimeExport();assert.equal(h.canvas.width,1280);assert.equal(h.canvas.height,720);assert.equal(h.state.recorder.options.videoBitsPerSecond,6000000);h.context.stopExport(true);
 });
 test('cancelling during audio setup cannot later start playback or recording',async()=>{
- const h=harness('1080',true);const pending=h.context.startExport();h.context.stopExport(true);h.release();await pending;
+ const h=harness('1080',true);const pending=h.context.startRealtimeExport();h.context.stopExport(true);h.release();await pending;
  assert.equal(h.started,0);assert.equal(h.state.recorder,null);assert.equal(h.state.exporting,false);assert.ok(h.video.stopped);
 });
 test('encoder startup error unlocks export and cleans up the stream',async()=>{
- const h=harness('1080',false,true);await h.context.startExport();assert.equal(h.state.recorder,null);assert.equal(h.state.exportStream,null);assert.equal(h.state.exporting,false);assert.ok(h.video.stopped);assert.equal(h.shell.inert,false);
+ const h=harness('1080',false,true);await h.context.startRealtimeExport();assert.equal(h.state.recorder,null);assert.equal(h.state.exportStream,null);assert.equal(h.state.exporting,false);assert.ok(h.video.stopped);assert.equal(h.shell.inert,false);
 });

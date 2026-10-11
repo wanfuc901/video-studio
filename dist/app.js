@@ -1,15 +1,22 @@
 import { createSessionStore, SessionAutosaver, projectRecord } from './session-store.js';
 import { exportPreset, setupPrecisionWheel } from './precision-tools.js';
 import { setupAILyrics } from './ai-lyrics-ui.js';
-import { EditHistory, fitStage, revealTimeline, shortcutFor } from './editor-tools.js';
+import { EditHistory, fitStage, revealTimeline, shortcutFor, visibleTimeRange, clipInRange } from './editor-tools.js';
 import { drawTextClips } from './karaoke.js';
 import { setupKaraoke } from './karaoke-ui.js';
+import { renderOfflineExport, supportsOfflineExport, loadMediabunny, estimatedExportBytes, ExportDecodeError } from './offline-export.js';
 const IMAGE_DURATION = 5;
 const MAX_IMAGE_DURATION = 120;
 const MIN_CLIP_DURATION = 0.2;
 const MAX_MEDIA_DURATION = 7200;
 const EXPORT_FPS = 30;
 const SEEK_TOLERANCE = 0.18;
+const TRACK_LABEL_WIDTH = 146;
+const AUTOSAVE_DELAY_MS = 700;
+// Above this estimated size the export streams to a file picked by the user instead of RAM.
+const STREAM_EXPORT_BYTES = 400 * 1024 * 1024;
+const EXPORT_FRAME_WAIT_MS = 5000;
+const EXPORT_FRAME_POLL_MS = 30;
 
 const elements = Object.fromEntries([
   'file-input', 'upload-zone', 'asset-list', 'asset-count', 'stage-add',
@@ -22,7 +29,7 @@ const elements = Object.fromEntries([
   'audio-property', 'clip-mute', 'mute-switch', 'clip-volume', 'volume-value',
   'delete-inspector', 'toast', 'project-name', 'export-button', 'export-dialog',
   'close-export', 'cancel-export', 'start-export', 'export-message',
-  'export-progress-bar', 'export-status', 'export-percent', 'export-resolution', 'stage-resolution'
+  'export-progress-bar', 'export-status', 'export-percent', 'export-resolution', 'export-mode', 'stage-resolution'
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
@@ -30,7 +37,9 @@ const state = {
   playing: false, lastFrame: 0, globalMute: false, activeVisualId: null,
   audioElements: new Map(), audioGraph: null, exporting: false,
   exportCancelled: false, recorder: null, exportStream: null,
-  exportCanvas: null, exportSettings: exportPreset('1080'), exportRun: 0, toastTimer: null, drag: null, frameRequest: null
+  exportCanvas: null, exportVisual: null, exportAbort: null, exportSettings: exportPreset('1080'), exportRun: 0, toastTimer: null,
+  drag: null, dragFrame: 0, frameRequest: null, renderedRange: null, scrollFrame: 0, beats: [],
+  previewFrameReady: true, previewFrameToken: 0
 };
 
 const icon = (name) => `<svg class="icon"><use href="#i-${name}"/></svg>`;
@@ -303,32 +312,66 @@ function makeClipElement(clip) {
   return clipElement;
 }
 
-function renderTimeline() {
-  karaokeUI.renderList();
-  const duration = Math.max(30, Math.ceil(projectDuration() + 5));
-  const timelineWidth = Math.max(elements['timeline-scroll'].clientWidth, 146 + duration * state.zoom);
-  elements['timeline-canvas'].style.width = `${timelineWidth}px`;
-  elements.ruler.replaceChildren();
+function trackContent(track) {
+  return elements[track === 'visual' ? 'video-track' : track === 'text' ? 'text-track' : 'audio-track'].querySelector('.track-content');
+}
+
+function timelineRange(overscanScreens = 1) {
+  const viewport = elements['timeline-scroll'];
+  return visibleTimeRange({ scrollLeft: viewport.scrollLeft, viewportWidth: viewport.clientWidth || 1200, zoom: state.zoom, labelWidth: TRACK_LABEL_WIDTH, overscanScreens });
+}
+
+function renderRuler(duration, range) {
   const step = state.zoom < 40 ? 10 : 5;
-  for (let second = 0; second <= duration; second += step) {
+  const ticks = [];
+  for (let second = Math.floor(range.start / step) * step; second <= Math.min(duration, range.end); second += step) {
     const tick = document.createElement('span');
     tick.className = 'ruler-mark';
     tick.style.left = `${second * state.zoom}px`;
     tick.textContent = formatTime(second);
-    elements.ruler.append(tick);
+    ticks.push(tick);
   }
+  for (const beat of state.beats) {
+    if (beat < range.start || beat > range.end) continue;
+    const mark = document.createElement('span');
+    mark.className = 'beat-mark';
+    mark.style.left = `${beat * state.zoom}px`;
+    ticks.push(mark);
+  }
+  elements.ruler.replaceChildren(...ticks);
+}
+
+// Only clips near the viewport are in the DOM; long songs with hundreds of lines stay responsive.
+function renderTimeline() {
+  karaokeUI.renderList();
+  const duration = Math.max(30, Math.ceil(projectDuration() + 5));
+  const timelineWidth = Math.max(elements['timeline-scroll'].clientWidth, TRACK_LABEL_WIDTH + duration * state.zoom);
+  elements['timeline-canvas'].style.width = `${timelineWidth}px`;
+  const range = timelineRange();
+  state.renderedRange = range;
+  renderRuler(duration, range);
+  const draggedId = state.drag?.id;
   for (const track of ['visual', 'audio', 'text']) {
-    const container = elements[track === 'visual' ? 'video-track' : track === 'text' ? 'text-track' : 'audio-track'].querySelector('.track-content');
+    const container = trackContent(track);
     container.style.backgroundSize = `${state.zoom}px 100%`;
-    container.replaceChildren(...state.clips.filter((clip) => clip.track === track).map(makeClipElement));
+    container.replaceChildren(...state.clips.filter((clip) => clip.track === track && (clip.id === draggedId || clipInRange(clip, range))).map(makeClipElement));
   }
   elements['clip-count'].textContent = `${state.clips.length} clip`;
   elements['timeline-duration'].textContent = `Tổng thời lượng ${formatTime(projectDuration())}`;
   renderPlayhead();
 }
 
+function onTimelineScroll() {
+  if (state.scrollFrame) return;
+  state.scrollFrame = requestAnimationFrame(() => {
+    state.scrollFrame = 0;
+    const view = timelineRange(0), rendered = state.renderedRange;
+    if (!rendered || view.start < rendered.start || view.end > rendered.end) renderTimeline();
+  });
+}
+
 function renderPlayhead() {
-  elements.playhead.style.left = `${146 + state.playhead * state.zoom}px`;
+  elements.playhead.style.left = `${TRACK_LABEL_WIDTH + state.playhead * state.zoom}px`;
   elements['time-display'].textContent = `${formatTime(state.playhead)} / ${formatTime(projectDuration())}`;
   karaokeUI.renderClock();
 }
@@ -369,12 +412,25 @@ function activeVisualClip() {
     .sort((first, second) => second.start - first.start)[0];
 }
 
+// readyState can report data before Chrome has presented the new frame (after a src change or seek);
+// the real-time export holds the previous frame until requestVideoFrameCallback confirms a fresh one.
+function markPreviewFramePending(video) {
+  if (typeof video.requestVideoFrameCallback !== 'function') return;
+  const token = ++state.previewFrameToken;
+  state.previewFrameReady = false;
+  video.requestVideoFrameCallback(() => { if (token === state.previewFrameToken) state.previewFrameReady = true; });
+}
+
 function synchronizeMedia(media, targetTime, shouldPlay) {
   media.playbackRate = state.exporting ? 1 : state.previewSpeed;
   if (media.readyState >= 1 && Math.abs(media.currentTime - targetTime) > (shouldPlay ? SEEK_TOLERANCE : 0.0005)) {
-    try { media.currentTime = targetTime; } catch (error) { showToast('Không thể tua tệp media này.'); }
+    try {
+      media.currentTime = targetTime;
+      if (media === elements['preview-video']) markPreviewFramePending(media);
+    } catch (error) { showToast('Không thể tua tệp media này.'); }
   }
   if (shouldPlay && media.paused && media.readyState >= 2) {
+    if (media === elements['preview-video']) markPreviewFramePending(media);
     media.play().catch(() => { pausePlayback(); showToast('Trình duyệt không thể phát tệp này.'); });
   } else if (!shouldPlay && !media.paused) media.pause();
 }
@@ -391,7 +447,7 @@ function syncPreview() {
     const asset = getAsset(clip);
     if (asset.kind === 'image') image.src = asset.url;
     else {
-      if (state.activeVisualId !== clip.id) { video.src = asset.url; video.load(); }
+      if (state.activeVisualId !== clip.id) { video.src = asset.url; video.load(); markPreviewFramePending(video); }
       video.muted = state.globalMute || clip.muted;
       video.volume = clip.volume;
       synchronizeMedia(video, clip.sourceStart + state.playhead - clip.start, state.playing);
@@ -526,20 +582,37 @@ function startClipDrag(event) {
   elements['timeline-scroll'].focus({ preventScroll: true });
   state.selectedId = clip.id;
   recordEdit();
-  state.drag = { id: clip.id, x: event.clientX, start: clip.start,
+  state.drag = { id: clip.id, x: event.clientX, pointerX: event.clientX, start: clip.start,
     sourceStart: clip.sourceStart, duration: clip.duration,
-    mode: event.target.dataset.mode || 'move' };
+    mode: event.target.dataset.mode || 'move', element: null };
   renderInspector();
   renderTimeline();
+  state.drag.element = elements['timeline-canvas'].querySelector(`.clip[data-clip-id="${CSS.escape(clip.id)}"]`);
 }
 
+// Pointer events can fire several times per frame; apply only the latest position once per frame.
 function moveClipDrag(event) {
+  if (!state.drag) return;
+  state.drag.pointerX = event.clientX;
+  if (!state.dragFrame) state.dragFrame = requestAnimationFrame(applyClipDrag);
+}
+
+function updateDraggedClipElement(clip) {
+  const element = state.drag?.element;
+  if (!element?.isConnected) { renderTimeline(); return; }
+  element.style.left = `${clip.start * state.zoom}px`;
+  element.style.width = `${Math.max(clip.duration * state.zoom, 12)}px`;
+  element.querySelector('.clip-duration').textContent = `${roundTime(clip.duration)}s`;
+}
+
+function applyClipDrag() {
+  state.dragFrame = 0;
   const drag = state.drag;
   if (!drag) return;
   const clip = state.clips.find((item) => item.id === drag.id);
   if (!clip) { stopClipDrag(); return; }
   const asset = getAsset(clip);
-  const delta = roundTime((event.clientX - drag.x) / state.zoom);
+  const delta = roundTime((drag.pointerX - drag.x) / state.zoom);
   if (drag.mode === 'move') clip.start = Math.max(0, roundTime(drag.start + delta));
   if (drag.mode === 'left') {
     const change = clamp(delta, Math.max(-drag.sourceStart, -drag.start), drag.duration - MIN_CLIP_DURATION);
@@ -550,12 +623,19 @@ function moveClipDrag(event) {
   if (drag.mode === 'right') {
     clip.duration = roundTime(clamp(drag.duration + delta, MIN_CLIP_DURATION, assetLimit(asset) - drag.sourceStart));
   }
-  renderTimeline();
+  updateDraggedClipElement(clip);
   renderInspector();
   syncPreview();
 }
 
-function stopClipDrag() { if (!state.drag) return; state.drag = null; recordEdit(); }
+function stopClipDrag() {
+  if (!state.drag) return;
+  if (state.dragFrame) { cancelAnimationFrame(state.dragFrame); applyClipDrag(); }
+  state.drag = null;
+  recordEdit();
+  renderTimeline();
+  renderInspector();
+}
 
 function setExportProgress(progress) {
   const percent = Math.round(clamp(progress, 0, 1) * 100);
@@ -563,10 +643,15 @@ function setExportProgress(progress) {
   elements['export-percent'].textContent = `${percent}%`;
 }
 
+const EXPORT_BACKGROUND = '#080a0d';
+// MP4 first: Chrome/Edge record H.264 + AAC directly; other browsers fall back to WebM.
+const REALTIME_MIME_TYPES = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+
 function getExportMimeType() {
-  return ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
-    .find((type) => MediaRecorder.isTypeSupported(type));
+  return REALTIME_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
 }
+
+const extensionForMime = (mimeType) => mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
 
 async function ensureAudioGraph() {
   if (!state.audioGraph) {
@@ -595,34 +680,62 @@ function drawContained(context, source, width, height) {
   context.drawImage(source, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
 }
 
+// Real-time path: the visual layer is cached separately so a video that is still loading after a
+// clip change holds its last frame instead of recording black frames.
 function updateExportFrame() {
   if (!state.exportCanvas) return;
-  const context = state.exportCanvas.getContext('2d');
-  const {width: EXPORT_WIDTH, height: EXPORT_HEIGHT} = state.exportCanvas;
-  context.fillStyle = '#080a0d';
-  context.fillRect(0, 0, EXPORT_WIDTH, EXPORT_HEIGHT);
+  const { width, height } = state.exportCanvas;
   const clip = activeVisualClip();
-  if (clip) {
-    const asset = getAsset(clip);
-    if (asset.kind === 'image') drawContained(context, asset.image, EXPORT_WIDTH, EXPORT_HEIGHT);
-    if (asset.kind === 'video' && elements['preview-video'].readyState >= 2) {
-      drawContained(context, elements['preview-video'], EXPORT_WIDTH, EXPORT_HEIGHT);
-    }
+  const asset = clip ? getAsset(clip) : null;
+  const video = asset?.kind === 'video' ? elements['preview-video'] : null;
+  if (!video || (video.readyState >= 2 && state.previewFrameReady !== false)) {
+    const visual = state.exportVisual.getContext('2d');
+    visual.fillStyle = EXPORT_BACKGROUND;
+    visual.fillRect(0, 0, width, height);
+    if (asset?.kind === 'image') drawContained(visual, asset.image, width, height);
+    if (video) drawContained(visual, video, width, height);
   }
-  drawTextClips(context, state.clips, state.playhead, EXPORT_WIDTH, EXPORT_HEIGHT);
+  const context = state.exportCanvas.getContext('2d');
+  context.drawImage(state.exportVisual, 0, 0);
+  drawTextClips(context, state.clips, state.playhead, width, height);
   setExportProgress(state.playhead / projectDuration());
+}
+
+function exportFileName(extension) {
+  const safeName = elements['project-name'].value.trim().replace(/[\\/:*?"<>|]/g, '-').slice(0, 60) || 'video-studio';
+  return `${safeName}-${state.exportSettings.height}p.${extension}`;
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function lockExportUi(status) {
+  state.exporting = true; state.exportCancelled = false;
+  elements['start-export'].disabled = true; elements['export-resolution'].disabled = true;
+  if (elements['export-mode']) elements['export-mode'].disabled = true;
+  document.querySelector('.app-shell').inert = true;
+  elements['cancel-export'].textContent = 'Hủy xuất';
+  elements['export-status'].textContent = status;
+}
+
+function unlockExportUi() {
+  state.exporting = false;
+  document.querySelector('.app-shell').inert = false;
+  elements['start-export'].disabled = false;
+  elements['export-resolution'].disabled = false;
+  if (elements['export-mode']) elements['export-mode'].disabled = false;
+  elements['cancel-export'].textContent = 'Đóng';
 }
 
 function finishExport(chunks, mimeType) {
   if (!state.exportCancelled && chunks.length) {
-    const blob = new Blob(chunks, { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    const safeName = elements['project-name'].value.trim().replace(/[\\/:*?"<>|]/g, '-').slice(0, 60) || 'video-studio';
-    link.href = url;
-    link.download = `${safeName}-${state.exportSettings.height}p.webm`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    downloadBlob(new Blob(chunks, { type: mimeType }), exportFileName(extensionForMime(mimeType)));
     setExportProgress(1);
     elements['export-status'].textContent = 'Hoàn tất';
     showToast('Video đã sẵn sàng để tải xuống.');
@@ -630,20 +743,46 @@ function finishExport(chunks, mimeType) {
   state.exportStream?.getVideoTracks().forEach((track) => track.stop());
   state.exportStream = null;
   state.exportCanvas = null;
+  state.exportVisual = null;
   state.recorder = null;
-  state.exporting = false;
-  document.querySelector('.app-shell').inert = false;
-  elements['start-export'].disabled = false;
-  elements['export-resolution'].disabled = false;
-  elements['cancel-export'].textContent = 'Đóng';
+  unlockExportUi();
 }
 
 function stopExport(cancelled) {
+  if (state.exportAbort) { state.exportAbort.abort(); return; }
   state.exportCancelled = cancelled;
   pausePlayback();
-  if (state.recorder?.state === 'recording') state.recorder.stop();
+  if (state.recorder && state.recorder.state !== 'inactive') state.recorder.stop();
   else if (!state.recorder) { state.exportRun++; finishExport([], 'video/webm'); }
   if (cancelled) elements['export-status'].textContent = 'Đã hủy';
+}
+
+// Browsers throttle requestAnimationFrame in background tabs, which would freeze the real-time
+// recording while audio keeps going. Pause the recorder until the tab is visible again.
+function handleExportVisibility(hidden) {
+  const recorder = state.recorder;
+  if (!state.exporting || !recorder) return;
+  if (hidden && recorder.state === 'recording') {
+    pausePlayback(); recorder.pause();
+    elements['export-status'].textContent = 'Tạm dừng: quay lại tab này để tiếp tục ghi';
+  } else if (!hidden && recorder.state === 'paused') {
+    recorder.resume(); startPlayback();
+    elements['export-status'].textContent = 'Đang ghi video…';
+  }
+}
+
+async function waitForPreviewFrame() {
+  const clip = activeVisualClip();
+  const video = clip && getAsset(clip).kind === 'video' ? elements['preview-video'] : null;
+  if (!video) return;
+  const deadline = performance.now() + EXPORT_FRAME_WAIT_MS;
+  while ((video.readyState < 2 || state.previewFrameReady === false) && performance.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, EXPORT_FRAME_POLL_MS));
+  }
+}
+
+function exportMode() {
+  return elements['export-mode']?.value === 'realtime' || !supportsOfflineExport() ? 'realtime' : 'offline';
 }
 
 function updateExportSettings() {
@@ -651,10 +790,66 @@ function updateExportSettings() {
   state.exportSettings = exportPreset(elements['export-resolution'].value);
   const settings = state.exportSettings;
   elements['stage-resolution'].textContent = `Xuất ${settings.width} × ${settings.height}`;
-  elements['export-message'].textContent = `Video WebM ${settings.height}p (${settings.width} × ${settings.height}), ${settings.fps} fps, kèm chữ và hiệu ứng karaoke. Xuất theo thời gian thực trên thiết bị.`;
+  const offline = typeof supportsOfflineExport === 'function' && exportMode() === 'offline';
+  elements['export-message'].textContent = offline
+    ? `MP4 ${settings.height}p (${settings.width} × ${settings.height}), ${settings.fps} fps, kèm chữ karaoke. Dựng từng khung hình bằng WebCodecs: nhanh hơn thời gian thực, không mất hình khi chuyển clip hay đổi tab.`
+    : `Video ${settings.height}p (${settings.width} × ${settings.height}), ${settings.fps} fps, kèm chữ karaoke. Ghi theo thời gian thực; giữ tab này mở trong lúc xuất.`;
 }
 
 async function startExport() {
+  if (state.exporting) return;
+  if (!projectDuration()) { showToast('Timeline đang trống.'); return; }
+  updateExportSettings();
+  if (exportMode() === 'offline') await startOfflineExport();
+  else await startRealtimeExport();
+}
+
+async function pickExportFile(estimatedBytes) {
+  if (estimatedBytes < STREAM_EXPORT_BYTES || typeof window.showSaveFilePicker !== 'function') return null;
+  const handle = await window.showSaveFilePicker({ suggestedName: exportFileName('mp4'), types: [{ description: 'Video MP4', accept: { 'video/mp4': ['.mp4'] } }] });
+  return handle.createWritable();
+}
+
+function reportOfflineProgress(fraction, duration, startedAt) {
+  setExportProgress(fraction);
+  const elapsed = (performance.now() - startedAt) / 1000;
+  const speed = elapsed > 0.5 ? ` · ${(fraction * duration / elapsed).toFixed(1)}× thời gian thực` : '';
+  elements['export-status'].textContent = `Đang dựng khung hình${speed}`;
+}
+
+async function startOfflineExport() {
+  const settings = state.exportSettings, duration = projectDuration();
+  const controller = new AbortController();
+  state.exportAbort = controller;
+  lockExportUi('Đang chuẩn bị bộ mã hóa…');
+  setExportProgress(0);
+  pausePlayback(); state.loopTextId = null;
+  const startedAt = performance.now();
+  let fallbackReason = null;
+  try {
+    const writable = await pickExportFile(estimatedExportBytes(duration, settings.bitrate));
+    const result = await renderOfflineExport({ clips: structuredClone(state.clips), assets: state.assets, duration, settings,
+      globalMute: state.globalMute, drawText: drawTextClips, signal: controller.signal, writable,
+      onProgress: (fraction) => reportOfflineProgress(fraction, duration, startedAt) });
+    if (result.blob) downloadBlob(result.blob, exportFileName(result.extension));
+    setExportProgress(1);
+    elements['export-status'].textContent = `Hoàn tất · ${result.isMp4 ? 'MP4 H.264' : 'WebM'} · ${Math.round((performance.now() - startedAt) / 1000)} giây`;
+    showToast(writable ? 'Đã lưu video vào tệp đã chọn.' : 'Video đã sẵn sàng để tải xuống.');
+  } catch (error) {
+    if (controller.signal.aborted || error?.name === 'AbortError') elements['export-status'].textContent = 'Đã hủy';
+    else if (error instanceof ExportDecodeError) fallbackReason = error.message;
+    else { elements['export-status'].textContent = 'Lỗi xuất'; showToast(error instanceof Error ? error.message : 'Xuất video thất bại.'); }
+  } finally {
+    state.exportAbort = null;
+    unlockExportUi();
+  }
+  if (fallbackReason) {
+    showToast(`${fallbackReason} Chuyển sang ghi theo thời gian thực.`);
+    await startRealtimeExport();
+  }
+}
+
+async function startRealtimeExport() {
   if (state.exporting) return;
   if (!projectDuration()) { showToast('Timeline đang trống.'); return; }
   if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream || !window.AudioContext) {
@@ -662,36 +857,29 @@ async function startExport() {
     return;
   }
   const mimeType = getExportMimeType();
-  if (!mimeType) { showToast('Trình duyệt này chưa hỗ trợ xuất WebM.'); return; }
+  if (!mimeType) { showToast('Trình duyệt này chưa hỗ trợ ghi MP4/WebM.'); return; }
   updateExportSettings();
   const run = ++state.exportRun;
-  state.exporting = true; state.exportCancelled = false;
-  elements['start-export'].disabled = true; elements['export-resolution'].disabled = true;
-  document.querySelector('.app-shell').inert = true;
-  elements['export-status'].textContent = 'Đang chuẩn bị…';
+  lockExportUi('Đang chuẩn bị…');
   try {
     pausePlayback();
     state.loopTextId = null;
     seekTo(0);
-    state.exportCanvas = document.createElement('canvas');
-    state.exportCanvas.width = state.exportSettings.width;
-    state.exportCanvas.height = state.exportSettings.height;
-    const videoStream = state.exportCanvas.captureStream(state.exportSettings.fps);
+    const { width, height, fps, bitrate } = state.exportSettings;
+    state.exportCanvas = Object.assign(document.createElement('canvas'), { width, height });
+    state.exportVisual = Object.assign(document.createElement('canvas'), { width, height });
+    const videoStream = state.exportCanvas.captureStream(fps);
     state.exportStream = new MediaStream(videoStream.getVideoTracks());
     const audioStream = await ensureAudioGraph();
+    await waitForPreviewFrame();
     if (run !== state.exportRun || state.exportCancelled) { videoStream.getVideoTracks().forEach(track => track.stop()); return; }
     for (const track of audioStream.getAudioTracks()) state.exportStream.addTrack(track);
-    const recorder = new MediaRecorder(state.exportStream, { mimeType, videoBitsPerSecond: state.exportSettings.bitrate });
+    const recorder = new MediaRecorder(state.exportStream, { mimeType, videoBitsPerSecond: bitrate });
     const chunks = [];
     recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
     recorder.onerror = () => { stopExport(true); showToast('Xuất video thất bại.'); };
     recorder.onstop = () => finishExport(chunks, mimeType);
     state.recorder = recorder;
-    state.exporting = true;
-    document.querySelector('.app-shell').inert = true;
-    state.exportCancelled = false;
-    elements['start-export'].disabled = true;
-    elements['cancel-export'].textContent = 'Hủy xuất';
     elements['export-status'].textContent = 'Đang ghi video…';
     setExportProgress(0);
     updateExportFrame();
@@ -741,7 +929,14 @@ function bindEvents() {
   elements['timeline-scroll'].setAttribute('aria-label', 'Timeline. Delete xóa clip, Ctrl Z hoàn tác, S chia clip, T thêm chữ.');
   const observer = new ResizeObserver(resizeStage); observer.observe(document.querySelector('.stage-wrap'));
   resizeStage();
-  elements['export-button'].addEventListener('click', () => { if (!projectDuration()) { showToast('Hãy thêm media vào timeline trước.'); return; } elements['export-dialog'].showModal(); });
+  elements['export-button'].addEventListener('click', () => {
+    if (!projectDuration()) { showToast('Hãy thêm media vào timeline trước.'); return; }
+    updateExportSettings();
+    elements['export-dialog'].showModal();
+    // Warm the encoder library while the user reads the dialog; a failure is reported again on start.
+    if (exportMode() === 'offline') loadMediabunny().catch((error) => { elements['export-status'].textContent = error.message; });
+  });
+  elements['export-mode'].addEventListener('change', updateExportSettings);
   elements['close-export'].addEventListener('click', () => { if (state.exporting) stopExport(true); elements['export-dialog'].close(); });
   elements['cancel-export'].addEventListener('click', () => { if (state.exporting) stopExport(true); else elements['export-dialog'].close(); });
   elements['export-resolution'].addEventListener('change', updateExportSettings);
@@ -755,7 +950,9 @@ function bindEvents() {
     }
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {saveSession();void sessionAutosaver?.flush();}
+    const hidden = document.visibilityState === 'hidden';
+    handleExportVisibility(hidden);
+    if (hidden) {saveSession();void sessionAutosaver?.flush();}
   });
   // Capture view changes and unfinished AI drafts, including controls outside renderAll.
   for (const type of ['input','change']) document.addEventListener(type, event => {
@@ -764,6 +961,7 @@ function bindEvents() {
   let viewTimer;
   const saveView = () => {clearTimeout(viewTimer);viewTimer=setTimeout(saveSession,200);};
   elements['timeline-scroll'].addEventListener('scroll',saveView);
+  elements['timeline-scroll'].addEventListener('scroll',onTimelineScroll,{passive:true});
   document.addEventListener('pointerup',saveView);
   document.addEventListener('wheel',saveView,{passive:true});
   document.getElementById('retry-session-save').onclick=()=>{saveSession();void sessionAutosaver?.flush();};
@@ -801,6 +999,7 @@ async function restoreSession() {
       state.assets=new Map(project.assetIds.map(id=>[id,restored.get(id)]));state.clips=project.clips;
       state.selectedId=project.selectedId;state.playhead=clamp(project.playhead||0,0,projectDuration());
       state.zoom=clamp(project.zoom||52,24,600);state.globalMute=!!project.globalMute;
+      state.beats=Array.isArray(project.beats)?project.beats.filter(Number.isFinite):[];
       state.previewSpeed=[.5,.75,1].includes(project.previewSpeed)?project.previewSpeed:1;
       elements['project-name'].value=project.projectName||'Dự án mới';
       elements['zoom-slider'].value=state.zoom;document.getElementById('preview-speed').value=state.previewSpeed;
@@ -812,7 +1011,7 @@ async function restoreSession() {
       elements['timeline-scroll'].scrollLeft=project.scrollLeft||0;elements['timeline-scroll'].scrollTop=project.scrollTop||0;
       showToast('Đã khôi phục phiên: media, timeline, lời và lịch sử chỉnh sửa.');
     }
-    sessionAutosaver=new SessionAutosaver({store,revision:loaded.revision,assetIds:project?.assetIds||[],
+    sessionAutosaver=new SessionAutosaver({store,revision:loaded.revision,assetIds:project?.assetIds||[],delayMs:AUTOSAVE_DELAY_MS,
       snapshot:()=>projectRecord({state,projectName:elements['project-name'].value,history:editHistory,
         aiDraft:aiLyricsUI.snapshot(),scrollLeft:elements['timeline-scroll'].scrollLeft,scrollTop:elements['timeline-scroll'].scrollTop}),
       assets:()=>[...state.assets.values()],onStatus:sessionStatus});

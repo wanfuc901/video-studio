@@ -74,3 +74,13 @@ test('snapshot keeps text, settings and undo/redo independent of live state',()=
 test('unsupported storage reports failure instead of treating it as an empty session',async()=>{
   await assert.rejects(createSessionStore(null).load(),/không cho phép/);
 });
+test('delayed autosave coalesces a burst of edits into one write and flush writes immediately',async()=>{
+  const writes=[];let content=0;
+  const saver=new SessionAutosaver({store:{async write(p){writes.push(p.content);return 'r'+writes.length;}},snapshot:()=>({content}),assets:()=>[],delayMs:30});
+  for(let i=1;i<=20;i++){content=i;saver.schedule();}
+  await new Promise(r=>setTimeout(r,80));
+  assert.deepEqual(writes,[20]);
+  content=21;saver.schedule();await saver.flush();
+  assert.deepEqual(writes,[20,21]);assert.equal(saver.pending,false);
+  await new Promise(r=>setTimeout(r,60));assert.equal(writes.length,2);
+});
