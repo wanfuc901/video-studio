@@ -1,0 +1,5 @@
+# Versions verified together on Windows 11 + RTX 3050 (CUDA 12.8 wheels, ctranslate2 4.8 needs CUDA 12).
+torch==2.11.0
+torchvision==0.26.0
+torchaudio==2.11.0
+numpy<3

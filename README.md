@@ -1,15 +1,42 @@
 # Frameflow Video Studio
 
-Trình biên tập video chạy trực tiếp trong trình duyệt. Thêm video, ảnh và âm thanh; kéo clip trên timeline, kéo mép để cắt, chia clip tại con trỏ, chỉnh thời lượng và âm lượng, bật hoặc tắt tiếng từng clip hay toàn bộ dự án. Xuất video WebM có âm thanh bằng MediaRecorder.
+Trình biên tập video chạy trực tiếp trong trình duyệt. Thêm video, ảnh và âm thanh; kéo clip trên timeline, kéo mép để cắt, chia clip tại con trỏ, chỉnh thời lượng và âm lượng, bật hoặc tắt tiếng từng clip hay toàn bộ dự án. Xuất MP4 (H.264 + AAC) bằng WebCodecs, nhanh hơn thời gian thực; trình duyệt cũ dùng MediaRecorder.
 
-Mở `dist/index.html` qua một máy chủ HTTP tĩnh. Ví dụ:
+Mở `dist/index.html` qua một máy chủ HTTP tĩnh, ví dụ `npm start` (Python `http.server` ở cổng 8765), hoặc dùng bản GitHub Pages https://wanfuc901.github.io/video-studio/ .
 
 ```powershell
 cd dist
 python -m http.server 8765
 ```
 
-Sau đó truy cập `http://localhost:8765`. Phiên làm việc và tệp media tự lưu trong IndexedDB của trình duyệt; mở lại cùng địa chỉ để tiếp tục sau khi trạng thái báo Đã lưu. Quá trình xuất diễn ra theo thời gian thực nên video 1 phút cần khoảng 1 phút để tạo.
+Sau đó truy cập `http://localhost:8765`. Phiên làm việc và tệp media tự lưu trong IndexedDB của trình duyệt; mở lại cùng địa chỉ để tiếp tục sau khi trạng thái báo Đã lưu. Chế độ Dựng nhanh không phụ thuộc thời gian phát; chế độ Ghi thời gian thực cần đúng bằng thời lượng video.
+
+## Karaoke Pro: bắt lời, nhịp, ngân và vang (bộ chạy trên máy)
+
+Chọn **Tạo lời bằng AI → Trên máy**, giữ ô **Karaoke Pro**. Bộ chạy `tools/local-ai` nhận tệp gốc, chỉ xử lý đoạn Từ–Đến và trả về:
+
+- **Lời**: có lyrics thì căn cưỡng bức từng ký tự (CTC, wav2vec2 tiếng Việt), giữ đúng chính tả và xuống dòng; chưa có lyrics thì Whisper Large V3 nghe trên giọng đã tách rồi căn lại.
+- **Nhịp lời**: điểm bắt đầu từ được kéo về onset của giọng hát (tìm lùi tối đa 250 ms trước đỉnh CTC, vì CTC luôn báo trễ khoảng 90 ms).
+- **Ngân**: từ kéo dài giữ màu karaoke tới khi dứt giọng; bảng xem lại ghi "Ngân: lan 1.6s".
+- **Vang**: câu ở lại trên màn hình tới khi hết tiếng vang, không chồng câu kế tiếp.
+- **Nhịp nhạc**: BPM và các phách hiện thành vạch trên thước timeline sau khi chèn lời.
+
+Cài đặt, model và API ở [tools/local-ai/README.md](tools/local-ai/README.md). Trình duyệt (Whisper Tiny/Base/Small, nay ưu tiên WebGPU) và Groq vẫn dùng được như trước.
+
+## Xuất nhanh và hiệu năng
+
+- **Dựng nhanh (mặc định)**: Mediabunny + WebCodecs giải mã từng khung hình theo timestamp, vẽ chữ karaoke rồi mã hóa MP4. Không có khung đen khi chuyển clip, không hỏng khi đổi tab. Video ước tính trên 400 MB sẽ hỏi nơi lưu để ghi thẳng ra ổ đĩa. Tệp nguồn WebCodecs không giải mã được thì tự chuyển sang ghi thời gian thực.
+- **Ghi thời gian thực**: giữ khung cuối khi video đang tải để không ghi khung đen, tự tạm dừng khi tab bị ẩn, ưu tiên MP4 nếu MediaRecorder hỗ trợ.
+- Timeline chỉ dựng các clip trong vùng nhìn thấy (thêm 1 màn hình mỗi bên); kéo clip chỉ cập nhật clip đó, mỗi khung hình một lần.
+- Lịch sử hoàn tác dùng chung các clip không đổi, nên bản lưu phiên không phình theo số bước. Tự lưu gom thay đổi trong 0,7 giây.
+- Tạo lời trên trình duyệt từ chối tệp dài cần quá 512 MB RAM để giải mã, và hướng dẫn chuyển sang bộ chạy trên máy.
+
+## Kiểm tra
+
+```sh
+npm test                                                     # 71 kiểm tra JavaScript
+python -m unittest discover -s tests -p "test_*.py"          # 18 kiểm tra Python (cần numpy)
+```
 
 ## Chữ và karaoke
 
@@ -20,7 +47,7 @@ Sau đó truy cập `http://localhost:8765`. Phiên làm việc và tệp media 
 - **Mốc tốc độ tùy chỉnh**: các cặp giây/% màu tạo đường chạy theo đoạn. Hai mốc cùng % giữ màu tại chỗ cho đoạn ngân. Mốc giây tăng dần, % không giảm, bắt đầu 0% và kết thúc 100%.
 - Phông, cỡ chữ, màu gốc/màu chạy, viền, vị trí, độ rộng, độ hiện rõ, căn lề và nền tối tùy chỉnh được. Nội dung nhiều dòng tự xuống hàng theo độ rộng.
 - Nghe thử 0.5×/0.75×, lặp câu và tua ±10 ms để căn nhịp; tốc độ nghe thử không làm thay đổi tốc độ video xuất. Độ chính xác thực tế khi phát/xuất còn phụ thuộc nhịp khung hình và media trong trình duyệt.
-- Chữ được vẽ bằng cùng một bộ dựng canvas cho xem trước và xuất WebM 1920 × 1080 hoặc 1280 × 720, 30 fps; có thể dùng chữ trên nền đen mà không cần video nền.
+- Chữ được vẽ bằng cùng một bộ dựng canvas cho xem trước và xuất MP4/WebM 1920 × 1080 hoặc 1280 × 720, 30 fps; có thể dùng chữ trên nền đen mà không cần video nền.
 
 Mốc màu luôn tính từ câu gốc: `thời_gian_màu = (thời_gian_video - bắt_đầu_clip + cắt_đầu - thời_gian_chờ) × tốc_độ_màu`.
 

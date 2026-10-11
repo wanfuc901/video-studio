@@ -1,0 +1,11 @@
+# Karaoke Pro: vocal separation, de-reverb, CTC forced alignment, held-note/echo/beat analysis.
+# torch/torchvision/torchaudio are installed first by start-windows.cmd from the PyTorch CUDA (or CPU) index
+# and pinned through constraints.txt so these packages cannot replace them with a CPU-only build.
+audio-separator==0.47.0
+transformers==5.19.0
+librosa==1.0.0
+soundfile==0.14.0
+uroman==1.3.1.1
+# audio-separator imports audioread (no longer pulled in by librosa 1.0) and needs an ffmpeg binary.
+audioread==3.1.0
+imageio-ffmpeg==0.6.0

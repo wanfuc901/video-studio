@@ -1,7 +1,9 @@
-import { SAMPLE_RATE, validateRange, normalizeWords, groupWords, updateCueText, cuesToClips } from './transcript.js';
+import { SAMPLE_RATE, validateRange, normalizeWords, groupWords, updateCueText, cuesToClips, karaokeResultToCues, karaokeSummary } from './transcript.js';
 
 import { parseLyrics, timedLyricsInRange, alignLyrics } from './lyrics-import.js';
-import { PROVIDERS, transcribeAPI, checkLocal, localEndpoint } from './ai-providers.js';
+import { PROVIDERS, transcribeAPI, checkLocal, localEndpoint, runKaraokeJob, KARAOKE_STAGES } from './ai-providers.js';
+
+const MAX_BROWSER_DECODE_BYTES=512*1024*1024;
 
 export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,renderAll,revealClip,showToast,onSessionChange=()=>{}}) {
   const $=id=>document.getElementById(id);
@@ -19,7 +21,7 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
     <div class="ai-grid"><label>Từ giây trong tệp<input id="ai-from" type="number" min="0" step="0.001"></label><label>Đến giây trong tệp<input id="ai-to" type="number" min="0" step="0.001"></label><label>Chèn tại giây trên timeline<input id="ai-insert" type="number" min="0" step="0.001"></label></div>
     <div id="ai-engine-settings"><label>Nơi chạy AI<select id="ai-provider"><option value="browser">Trên trình duyệt · miễn phí, không key</option><option value="groq">Groq API · key riêng, có free tier</option><option value="local">Trên máy · Faster Whisper CPU / GPU</option></select></label>
     <div id="ai-groq-settings" hidden><label>Groq API key<input id="ai-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Dán key từ tài khoản Groq của bạn"></label><p class="input-hint">Key chỉ giữ trong tab này, không lưu vào dự án. Âm thanh của đoạn chọn được gửi trực tiếp tới Groq khi bấm nhận diện. <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">Tạo key</a> · <a href="https://console.groq.com/settings/limits" target="_blank" rel="noopener noreferrer">Xem hạn mức</a></p></div>
-    <div id="ai-local-settings" hidden><div class="ai-grid ai-two"><label>Địa chỉ bộ chạy local<input id="ai-local-url" value="http://127.0.0.1:8766" autocomplete="off"></label><label>Mã kết nối local<input id="ai-local-key" type="password" autocomplete="off" spellcheck="false" placeholder="Mã hiện trong cửa sổ chạy local"></label></div><div class="ai-import-row"><button id="ai-local-test" class="button button-ghost" type="button">Kiểm tra kết nối</button><a href="https://github.com/wanfuc901/video-studio/tree/main/tools/local-ai" target="_blank" rel="noopener noreferrer">Cài bộ chạy trên Windows / CPU / GPU ↗</a></div><p id="ai-local-status" class="input-hint" role="status"></p></div>
+    <div id="ai-local-settings" hidden><div class="ai-grid ai-two"><label>Địa chỉ bộ chạy local<input id="ai-local-url" value="http://127.0.0.1:8766" autocomplete="off"></label><label>Mã kết nối local<input id="ai-local-key" type="password" autocomplete="off" spellcheck="false" placeholder="Mã hiện trong cửa sổ chạy local"></label></div><div class="ai-import-row"><button id="ai-local-test" class="button button-ghost" type="button">Kiểm tra kết nối</button><a href="https://github.com/wanfuc901/video-studio/tree/main/tools/local-ai" target="_blank" rel="noopener noreferrer">Cài bộ chạy trên Windows / CPU / GPU ↗</a></div><p id="ai-local-status" class="input-hint" role="status"></p><div class="ai-pro"><label class="check-inline"><input type="checkbox" id="ai-pro" checked> <strong>Karaoke Pro</strong>: tách giọng, căn từng từ theo lyrics, bắt ngân, vang và nhịp</label><div id="ai-pro-options" class="ai-pro-options"><label class="check-inline"><input type="checkbox" id="ai-pro-separate" checked> Tách giọng khỏi nhạc nền</label><label class="check-inline"><input type="checkbox" id="ai-pro-dereverb" checked> Khử vang để bắt điểm dứt giọng</label><label class="check-inline"><input type="checkbox" id="ai-pro-beats" checked> Dò nhịp, hiện phách trên timeline</label></div><p class="input-hint">Gửi tệp gốc tới bộ chạy trên máy và chỉ xử lý đoạn Từ–Đến. Có lyrics thì giữ đúng chữ và căn cưỡng bức từng từ; chưa có lyrics thì Whisper nghe rồi căn lại. Từ được ngân giữ màu tới lúc dứt giọng; câu có vang ở lại trên màn hình tới khi hết vang.</p></div></div>
     <div class="ai-grid"><label>Ngôn ngữ<select id="ai-language"><option value="vietnamese">Tiếng Việt</option><option value="english">Tiếng Anh</option><option value="auto">Tự nhận diện</option><option value="chinese">Tiếng Trung</option><option value="korean">Tiếng Hàn</option><option value="japanese">Tiếng Nhật</option></select></label><label>Mô hình<select id="ai-model"><option value="base">Base · cân bằng</option><option value="tiny">Tiny · nhẹ, thử nhanh</option><option value="small">Small · lớn hơn, chậm hơn</option></select></label><label>Tối đa từ / câu<select id="ai-line-length"><option value="6">6 từ</option><option value="8" selected>8 từ</option><option value="10">10 từ</option><option value="12">12 từ</option></select></label></div></div>
     </fieldset>
     <div class="ai-note"><strong id="ai-provider-title"></strong><p id="ai-provider-note"></p><p id="ai-quality-note">Lời có sẵn giúp giảm sửa nội dung; thời gian nghe của model vẫn phụ thuộc thiết bị. Mốc karaoke cần kiểm tra lại, nhất là nhạc nền lớn hoặc đoạn ngân. Tối đa 10 phút / lần, tệp nguồn 300 MB. Lyrics và kết quả hoàn tất được tự lưu; F5 khi AI đang chạy cần nhận diện lại.</p></div>
@@ -29,8 +31,8 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
     <div class="ai-actions"><button id="ai-cancel" class="button button-ghost" hidden>Dừng nhận diện</button><button id="ai-start" class="button button-ghost">✦ Nhận diện lời</button><button id="ai-insert-button" class="button button-primary" disabled>Thêm lời vào timeline</button></div>
   </dialog>`);
   const dialog=$('ai-lyrics-dialog');
-  let sources=new Map(),worker=null,jobId=0,busy=false,cues=[],resultOffset=0,timer=null,startedAt=0,request=null,lastResult=null,activeLyrics=null,activeSignature="",summary="";
-  function clearResult() { cues=[];$('ai-review').hidden=true;$('ai-insert-button').disabled=true;$('ai-cue-list').replaceChildren();summary='';onSessionChange(); }
+  let sources=new Map(),worker=null,jobId=0,busy=false,cues=[],resultOffset=0,timer=null,startedAt=0,request=null,lastResult=null,activeLyrics=null,activeSignature="",summary="",pendingBeats=null;
+  function clearResult() { cues=[];pendingBeats=null;$('ai-review').hidden=true;$('ai-insert-button').disabled=true;$('ai-cue-list').replaceChildren();summary='';onSessionChange(); }
   function message(text,progress=null) {
     $('ai-progress-panel').hidden=false;$('ai-progress-label').textContent=text;
     if(progress===null)$('ai-progress').removeAttribute('value');else $('ai-progress').value=progress;
@@ -76,8 +78,11 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
     if(typeof mode==='string' && $('ai-mode').value!==mode){$('ai-mode').value=mode;clearResult();}
     setBusy(false);refreshControls();if(cues.length)renderReview();dialog.showModal();onSessionChange();
   }
-  async function extractAudio(file,from,to,id) {
+  async function extractAudio(file,from,to,id,duration) {
     if(file.size>300*1024*1024)throw new Error('Tệp lớn hơn 300 MB. Hãy dùng bản MP3/WAV có giọng hát hoặc video đã cắt ngắn.');
+    // decodeAudioData keeps the whole file decoded (up to stereo float32 at 16 kHz) before the range is sliced.
+    const decodedBytes=duration*SAMPLE_RATE*2*Float32Array.BYTES_PER_ELEMENT;
+    if(decodedBytes>MAX_BROWSER_DECODE_BYTES)throw new Error(`Tệp dài ${Math.round(duration/60)} phút cần khoảng ${Math.round(decodedBytes/1048576)} MB RAM để trình duyệt giải mã. Dùng nơi chạy "Trên máy" (giải mã đúng đoạn đã chọn) hoặc cắt tệp ngắn hơn.`);
     const OfflineContext=window.OfflineAudioContext||window.webkitOfflineAudioContext;
     if(!OfflineContext)throw new Error('Trình duyệt này không hỗ trợ đọc âm thanh. Hãy thử Chrome hoặc Edge trên máy tính.');
     message('Đang đọc âm thanh từ tệp…');
@@ -98,6 +103,14 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
     if(peak<0.0001)throw new Error('Đoạn này im lặng hoặc không có tín hiệu âm thanh.');
     return samples;
   }
+  function cueTimingBadge(cue) {
+    const held=cue.words.filter(w=>w.sustain).map(w=>`${w.word} ${w.sustain.toFixed(1)}s`);
+    const echo=(cue.displayEnd??cue.end)-cue.end;
+    const parts=[held.length?'Ngân: '+held.join(', '):'',echo>=.3?`Vang ${echo.toFixed(1)}s`:''].filter(Boolean);
+    if(!parts.length)return null;
+    const badge=document.createElement('small');badge.className='ai-review-badge ai-review-timing';badge.textContent=parts.join(' · ');
+    return badge;
+  }
   function renderReview() {
     $('ai-cue-list').replaceChildren();$('ai-review').hidden=false;
     cues.forEach((cue,index)=>{
@@ -105,7 +118,9 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
       const time=document.createElement('span');time.textContent=`${index+1} · ${(resultOffset+cue.start).toFixed(3)} → ${(resultOffset+cue.end).toFixed(3)}s`;
       const input=document.createElement('textarea');input.rows=2;input.value=cue.text;input.maxLength=2000;input.ariaLabel=`Nội dung câu ${index+1}`;
       input.addEventListener('input',()=>{updateCueText(cue,input.value);$('ai-insert-button').disabled=!cues.some(c=>c.text.trim());onSessionChange();});
-      if(cue.words.some(w=>w.estimated)){const badge=document.createElement('small');badge.className='ai-review-badge';badge.textContent='Mốc ước lượng · cần nghe lại';row.append(badge);}row.append(time,input);$('ai-cue-list').append(row);
+      if(cue.words.some(w=>w.estimated)){const badge=document.createElement('small');badge.className='ai-review-badge';badge.textContent='Mốc ước lượng · cần nghe lại';row.append(badge);}
+      const timingBadge=cueTimingBadge(cue);if(timingBadge)row.append(timingBadge);
+      row.append(time,input);$('ai-cue-list').append(row);
     });
     $('ai-result-count').textContent=`${cues.length} câu`;
     $('ai-result-note').textContent=summary+' '+(cues.some(c=>c.words.some(w=>w.estimated))?'Các mốc từ được đánh dấu là ước lượng. Bạn có thể chỉnh lại sau khi chèn.':'Mốc từ do AI dự đoán. Hãy kiểm tra lại nhịp khi nghe thử.');
@@ -148,7 +163,8 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
   function refreshControls(resetModel=false) {
     const provider=$('ai-provider').value,mode=$('ai-mode').value;
     $('ai-line-length').disabled=mode!=='auto';$('ai-lyrics-input').hidden=mode==='auto';$('ai-engine-settings').hidden=mode==='timed';
-    $('ai-groq-settings').hidden=provider!=='groq';$('ai-local-settings').hidden=provider!=='local';
+    $('ai-groq-settings').hidden=provider!=='groq';$('ai-local-settings').hidden=provider!=='local';$('ai-pro-options').hidden=!$('ai-pro').checked;
+    if(provider==='local'&&$('ai-pro').checked)$('ai-line-length').disabled=true;
     if(resetModel || !PROVIDERS[provider].some(([id])=>id===$('ai-model').value)) {
       $('ai-model').replaceChildren(...PROVIDERS[provider].map(([id,label])=>{const o=document.createElement('option');o.value=id;o.textContent=label;return o;}));
     }
@@ -173,7 +189,9 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
   };
   $('ai-local-test').onclick=async()=>{
     const button=$('ai-local-test');button.disabled=true;$('ai-local-status').textContent='Đang kết nối…';
-    try{const result=await checkLocal($('ai-local-url').value,$('ai-local-key').value);$('ai-local-status').textContent=`Đã kết nối · ${result.device} / ${result.compute_type}. Model tải khi bắt đầu nhận diện.`;}
+    try{const result=await checkLocal($('ai-local-url').value,$('ai-local-key').value),features=result.features||{};
+      const pro=features.karaoke?`Karaoke Pro sẵn sàng${features.separation?'':' (chưa cài tách giọng)'}`:'Karaoke Pro chưa cài: chạy lại start-windows.cmd';
+      $('ai-local-status').textContent=`Đã kết nối · ${result.device} / ${result.compute_type} · ${pro}. Model tải khi bắt đầu nhận diện.`;}
     catch{$('ai-local-status').textContent='Chưa kết nối. Chạy bộ local, nhập đúng mã và cho phép truy cập mạng cục bộ nếu trình duyệt hỏi.';}
     finally{button.disabled=false;}
   };
@@ -195,12 +213,16 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
         summary='Giữ mốc câu của file. Mốc từng từ được chia đều, hãy căn lại theo nhịp.';renderReview();message('Đã đọc mốc lời, không cần chạy AI.',1);return;
       }
       if(activeLyrics && activeLyrics.format!=='txt')throw new Error('File này đã có mốc. Chọn “Nhập SRT / LRC” để giữ đúng mốc, hoặc dán lời thuần văn bản để AI căn lại.');
-      activeSignature=JSON.stringify([source.asset.id,from,to,provider,model,language,provider==='local'?$('ai-local-url').value:'']);
-      if(lastResult?.signature===activeSignature){complete(lastResult.words,lastResult.duration);message('Đã căn lại từ kết quả nghe có sẵn, không chạy model lại.',1);return;}
+      const pro=provider==='local'&&$('ai-pro').checked;
+      const proOptions=pro?{separate:$('ai-pro-separate').checked,dereverb:$('ai-pro-dereverb').checked,beats:$('ai-pro-beats').checked}:null;
+      const signatureParts=[source.asset.id,from,to,provider,model,language,provider==='local'?$('ai-local-url').value:''];
+      activeSignature=JSON.stringify(pro?[...signatureParts,proOptions,activeLyrics?.lines??null]:signatureParts);
+      if(pro){await runPro({source,from,to,model,language,proOptions,id});return;}
+      if(lastResult?.signature===activeSignature&&!lastResult.pro){complete(lastResult.words,lastResult.duration);message('Đã căn lại từ kết quả nghe có sẵn, không chạy model lại.',1);return;}
       if(provider==='groq'&&!$('ai-api-key').value.trim())throw new Error('Hãy nhập Groq API key của bạn.');
       if(provider==='local'){localEndpoint($('ai-local-url').value);if(!$('ai-local-key').value.trim())throw new Error('Hãy nhập mã kết nối local.');}
       setBusy(true);
-      const audio=await extractAudio(source.asset.file,from,to,id);if(id!==jobId)return;
+      const audio=await extractAudio(source.asset.file,from,to,id,source.asset.duration);if(id!==jobId)return;
       if(provider==='browser') {
         message('Đang chuẩn bị AI. Lần đầu cần tải mô hình…');
         ensureWorker().postMessage({type:'transcribe',id,audio,model,language},[audio.buffer]);
@@ -211,6 +233,27 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
       }
     }catch(e){if(id!==jobId)return;setBusy(false);request=null;error(e.message||'Không đọc được âm thanh.');message('Chưa tạo được lời.',0);}
   };
+  const LANGUAGE_CODES={vietnamese:'vi',english:'en',chinese:'zh',korean:'ko',japanese:'ja',auto:'auto'};
+  function completePro(result) {
+    cues=karaokeResultToCues(result,activeLyrics?.lines??null);
+    if(!cues.length)throw new Error('Karaoke Pro không tìm thấy lời trong đoạn này.');
+    summary=karaokeSummary(result,cues);
+    pendingBeats=result.beats?.length?{from:resultOffset,to:resultOffset+result.duration,times:result.beats.map(b=>Math.round((resultOffset+b)*1000)/1000)}:null;
+    renderReview();message('Đã căn xong lời, ngân, vang và nhịp. Kiểm tra trước khi chèn.',1);
+  }
+  async function runPro({source,from,to,model,language,proOptions,id}) {
+    if(lastResult?.pro&&lastResult.signature===activeSignature){completePro(lastResult.pro);message('Dùng lại kết quả Karaoke Pro đã có, không chạy lại.',1);return;}
+    localEndpoint($('ai-local-url').value);
+    if(!$('ai-local-key').value.trim())throw new Error('Hãy nhập mã kết nối local.');
+    setBusy(true);request=new AbortController();message('Đang gửi tệp gốc tới bộ chạy trên máy…');
+    const result=await runKaraokeJob({endpoint:$('ai-local-url').value,key:$('ai-local-key').value,file:source.asset.file,signal:request.signal,
+      options:{from,to,language:LANGUAGE_CODES[language]??'auto',model,lyrics:activeLyrics?.lines??null,...proOptions},
+      onProgress:(stage,progress)=>{if(id===jobId)message(KARAOKE_STAGES[stage]||'Đang tải tệp lên bộ chạy local…',stage==='upload'?null:progress);}});
+    if(id!==jobId)return;
+    request=null;setBusy(false);lastResult={signature:activeSignature,pro:result};completePro(result);
+  }
+  $('ai-pro').onchange=()=>{clearResult();refreshControls();};
+  for(const id of ['ai-pro-separate','ai-pro-dereverb','ai-pro-beats'])$(id).addEventListener('change',clearResult);
   refreshControls(true);
   $('ai-insert-button').onclick=()=>{
     if(busy || !cues.length)return;
@@ -218,6 +261,7 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
     const clips=cuesToClips(cues,resultOffset,()=>crypto.randomUUID(),selected?.track==='text'?selected.style:null);
     if(!clips.length)return;
     pausePlayback();state.clips.push(...clips);state.selectedId=clips[0].id;state.playhead=clips[0].start;
+    if(pendingBeats)state.beats=[...state.beats.filter(b=>b<pendingBeats.from||b>pendingBeats.to),...pendingBeats.times].sort((a,b)=>a-b);
     renderAll();revealClip(clips[0]);elements['timeline-scroll'].scrollIntoView({block:'nearest'});
     clearResult();dialog.close();elements['timeline-scroll'].focus({preventScroll:true});
     showToast(`Đã thêm ${clips.length} câu AI. Ctrl+Z để hoàn tác toàn bộ lần chèn.`);
@@ -228,7 +272,7 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
   // Explicit whitelist: credentials are deliberately excluded from persisted drafts.
   const draftFields=['ai-mode','ai-source','ai-from','ai-to','ai-insert','ai-provider','ai-language','ai-model','ai-line-length','ai-supplied-lyrics','ai-local-url'];
   function snapshot() {
-    return structuredClone({fields:Object.fromEntries(draftFields.map(id=>[id,$(id).value])),cues,resultOffset,summary,lastResult});
+    return structuredClone({fields:Object.fromEntries(draftFields.map(id=>[id,$(id).value])),cues,resultOffset,summary,lastResult,pendingBeats});
   }
   function restore(draft) {
     if(!draft)return;
@@ -239,7 +283,7 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
     for(const id of draftFields)if(typeof fields[id]==='string')$(id).value=fields[id];
     refreshControls();
     if(!sources.has($('ai-source').value)){clearResult();return;}
-    cues=Array.isArray(draft.cues)?draft.cues:[];resultOffset=draft.resultOffset||0;summary=draft.summary||'';lastResult=draft.lastResult||null;
+    cues=Array.isArray(draft.cues)?draft.cues:[];resultOffset=draft.resultOffset||0;summary=draft.summary||'';lastResult=draft.lastResult||null;pendingBeats=draft.pendingBeats||null;
     if(cues.length)renderReview();
   }
   return {open,snapshot,restore};

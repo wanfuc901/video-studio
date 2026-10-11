@@ -121,7 +121,7 @@ export function setupKaraoke({ state, elements, renderAll, renderTimeline, syncP
     $('word-rows').replaceChildren(); $('point-rows').replaceChildren();
     if (c.karaoke.mode === 'words') c.karaoke.words.forEach((word, index) => {
       const row = document.createElement('div'); row.className = 'word-row';
-      const label = document.createElement('span'); label.textContent = `${index + 1}. ${word.word}`; label.title = word.word; row.append(label);
+      const label = document.createElement('span'); label.textContent = `${index + 1}. ${word.word}${word.sustain ? ` · ngân ${word.sustain.toFixed(1)}s` : ''}`; label.title = word.word; row.append(label);
       for (const key of ['start', 'end']) {
         const update = value => {
           const next = structuredClone(c.karaoke.words); next[index][key] = ms(value);

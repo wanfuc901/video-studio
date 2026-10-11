@@ -48,11 +48,13 @@ export function cuesToClips(cues, insertAt, makeId, style = null) {
   return activeCues.map((cue,index) => {
     const clip = createTextClip(ms(insertAt + cue.start), makeId());
     const next = activeCues[index + 1];
-    const end = Math.min(cue.end + (cue.timingSource === 'subtitle' ? 0 : .12), next?.start ?? Infinity);
+    // Karaoke Pro measures the echo tail: keep the line visible while the echo is still heard.
+    const tail = cue.timingSource === 'subtitle' ? cue.end : Math.max(cue.end + .12, cue.displayEnd ?? 0);
+    const end = Math.min(tail, next?.start ?? Infinity);
     clip.text = cue.text; clip.duration = ms(Math.max(cue.timingSource === 'subtitle' ? .002 : .2, end - cue.start));
     if (style) clip.style = structuredClone(style);
     clip.karaoke.mode='words'; clip.karaoke.delay=0; clip.karaoke.speed=1;
-    clip.karaoke.words=cue.words.map(w=>({word:w.word,start:ms(w.start-cue.start),end:ms(w.end-cue.start)}));
+    clip.karaoke.words=cue.words.map(w=>({word:w.word,start:ms(w.start-cue.start),end:ms(w.end-cue.start),...(w.sustain?{sustain:w.sustain}:{})}));
     clip.karaoke.sweepDuration=ms(cue.end-cue.start);
     return clip;
   });
@@ -64,4 +66,26 @@ export function planWindows(duration, coreLength=20, context=3) {
     windows.push({coreStart,coreEnd,start:Math.max(0,coreStart-context),end:Math.min(duration,coreEnd+context)});
   }
   return windows;
+}
+
+/**
+ * Converts a Karaoke Pro result into review cues. With supplied lyrics the user's exact spelling and line
+ * breaks are kept; the runner returns the same number of whitespace-separated words per line.
+ */
+export function karaokeResultToCues(result, suppliedLines = null) {
+  if (!result || !Array.isArray(result.lines)) throw new Error('Kết quả Karaoke Pro không hợp lệ.');
+  return result.lines.map((line, index) => {
+    const spelled = suppliedLines ? wordsOf(suppliedLines[index] ?? '') : null;
+    const words = line.words.map((w, i) => ({ word: spelled?.[i] ?? w.word, start: ms(w.start), end: ms(Math.max(w.end, w.start + .002)),
+      estimated: Boolean(w.estimated), ...(w.sustain > 0 ? { sustain: ms(w.sustain) } : {}) }));
+    return { text: words.map(w => w.word).join(' '), start: words[0].start, end: words.at(-1).end,
+      displayEnd: ms(Math.max(line.echoEnd ?? 0, words.at(-1).end)), words, needsReview: words.some(w => w.estimated), timingSource: 'karaoke-pro' };
+  }).filter(cue => cue.words.length);
+}
+export function karaokeSummary(result, cues) {
+  const held = cues.reduce((n, c) => n + c.words.filter(w => w.sustain).length, 0);
+  const echoed = cues.filter(c => c.displayEnd - c.end >= .3).length;
+  const steps = [result.separated ? 'tách giọng' : null, result.dereverbed ? 'khử vang' : null].filter(Boolean).join(' + ');
+  const tempo = result.tempo > 0 ? ` · nhịp ${Math.round(result.tempo)} BPM, ${result.beats.length} phách` : '';
+  return `Karaoke Pro (${result.device === 'cuda' ? 'GPU' : 'CPU'}${steps ? ' · ' + steps : ''}) · căn bằng ${result.aligner}. ${held} từ ngân, ${echoed} câu có vang${tempo}. Xử lý ${result.timings?.total ?? '?'} giây.`;
 }
