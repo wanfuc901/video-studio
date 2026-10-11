@@ -1,3 +1,4 @@
+import { exportPreset, setupPrecisionWheel } from './precision-tools.js';
 import { setupAILyrics } from './ai-lyrics-ui.js';
 import { EditHistory, fitStage, revealTimeline, shortcutFor } from './editor-tools.js';
 import { drawTextClips } from './karaoke.js';
@@ -6,8 +7,6 @@ const IMAGE_DURATION = 5;
 const MAX_IMAGE_DURATION = 120;
 const MIN_CLIP_DURATION = 0.2;
 const MAX_MEDIA_DURATION = 7200;
-const EXPORT_WIDTH = 1280;
-const EXPORT_HEIGHT = 720;
 const EXPORT_FPS = 30;
 const SEEK_TOLERANCE = 0.18;
 
@@ -22,7 +21,7 @@ const elements = Object.fromEntries([
   'audio-property', 'clip-mute', 'mute-switch', 'clip-volume', 'volume-value',
   'delete-inspector', 'toast', 'project-name', 'export-button', 'export-dialog',
   'close-export', 'cancel-export', 'start-export', 'export-message',
-  'export-progress-bar', 'export-status', 'export-percent'
+  'export-progress-bar', 'export-status', 'export-percent', 'export-resolution', 'stage-resolution'
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
@@ -30,7 +29,7 @@ const state = {
   playing: false, lastFrame: 0, globalMute: false, activeVisualId: null,
   audioElements: new Map(), audioGraph: null, exporting: false,
   exportCancelled: false, recorder: null, exportStream: null,
-  exportCanvas: null, toastTimer: null, drag: null, frameRequest: null
+  exportCanvas: null, exportSettings: exportPreset('1080'), exportRun: 0, toastTimer: null, drag: null, frameRequest: null
 };
 
 const icon = (name) => `<svg class="icon"><use href="#i-${name}"/></svg>`;
@@ -49,7 +48,7 @@ function snapshotProject() {
 
 function recordEdit(group = null) {
   if (state.drag) return;
-  editHistory.record(snapshotProject(), group);
+  editHistory.record(snapshotProject(), group || state.wheelEditGroup || null);
   document.getElementById('undo-button').disabled = !editHistory.canUndo;
   document.getElementById('redo-button').disabled = !editHistory.canRedo;
 }
@@ -588,6 +587,7 @@ function drawContained(context, source, width, height) {
 function updateExportFrame() {
   if (!state.exportCanvas) return;
   const context = state.exportCanvas.getContext('2d');
+  const {width: EXPORT_WIDTH, height: EXPORT_HEIGHT} = state.exportCanvas;
   context.fillStyle = '#080a0d';
   context.fillRect(0, 0, EXPORT_WIDTH, EXPORT_HEIGHT);
   const clip = activeVisualClip();
@@ -609,7 +609,7 @@ function finishExport(chunks, mimeType) {
     const link = document.createElement('a');
     const safeName = elements['project-name'].value.trim().replace(/[\\/:*?"<>|]/g, '-').slice(0, 60) || 'video-studio';
     link.href = url;
-    link.download = `${safeName}.webm`;
+    link.download = `${safeName}-${state.exportSettings.height}p.webm`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
     setExportProgress(1);
@@ -623,6 +623,7 @@ function finishExport(chunks, mimeType) {
   state.exporting = false;
   document.querySelector('.app-shell').inert = false;
   elements['start-export'].disabled = false;
+  elements['export-resolution'].disabled = false;
   elements['cancel-export'].textContent = 'Đóng';
 }
 
@@ -630,10 +631,20 @@ function stopExport(cancelled) {
   state.exportCancelled = cancelled;
   pausePlayback();
   if (state.recorder?.state === 'recording') state.recorder.stop();
+  else if (!state.recorder) { state.exportRun++; finishExport([], 'video/webm'); }
   if (cancelled) elements['export-status'].textContent = 'Đã hủy';
 }
 
+function updateExportSettings() {
+  if (state.exporting) return;
+  state.exportSettings = exportPreset(elements['export-resolution'].value);
+  const settings = state.exportSettings;
+  elements['stage-resolution'].textContent = `Xuất ${settings.width} × ${settings.height}`;
+  elements['export-message'].textContent = `Video WebM ${settings.height}p (${settings.width} × ${settings.height}), ${settings.fps} fps, kèm chữ và hiệu ứng karaoke. Xuất theo thời gian thực trên thiết bị.`;
+}
+
 async function startExport() {
+  if (state.exporting) return;
   if (!projectDuration()) { showToast('Timeline đang trống.'); return; }
   if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream || !window.AudioContext) {
     showToast('Trình duyệt này chưa hỗ trợ xuất video.');
@@ -641,17 +652,25 @@ async function startExport() {
   }
   const mimeType = getExportMimeType();
   if (!mimeType) { showToast('Trình duyệt này chưa hỗ trợ xuất WebM.'); return; }
+  updateExportSettings();
+  const run = ++state.exportRun;
+  state.exporting = true; state.exportCancelled = false;
+  elements['start-export'].disabled = true; elements['export-resolution'].disabled = true;
+  document.querySelector('.app-shell').inert = true;
+  elements['export-status'].textContent = 'Đang chuẩn bị…';
   try {
     pausePlayback();
     state.loopTextId = null;
     seekTo(0);
     state.exportCanvas = document.createElement('canvas');
-    state.exportCanvas.width = EXPORT_WIDTH;
-    state.exportCanvas.height = EXPORT_HEIGHT;
-    const videoStream = state.exportCanvas.captureStream(EXPORT_FPS);
+    state.exportCanvas.width = state.exportSettings.width;
+    state.exportCanvas.height = state.exportSettings.height;
+    const videoStream = state.exportCanvas.captureStream(state.exportSettings.fps);
+    state.exportStream = new MediaStream(videoStream.getVideoTracks());
     const audioStream = await ensureAudioGraph();
-    state.exportStream = new MediaStream([...videoStream.getVideoTracks(), ...audioStream.getAudioTracks()]);
-    const recorder = new MediaRecorder(state.exportStream, { mimeType, videoBitsPerSecond: 6000000 });
+    if (run !== state.exportRun || state.exportCancelled) { videoStream.getVideoTracks().forEach(track => track.stop()); return; }
+    for (const track of audioStream.getAudioTracks()) state.exportStream.addTrack(track);
+    const recorder = new MediaRecorder(state.exportStream, { mimeType, videoBitsPerSecond: state.exportSettings.bitrate });
     const chunks = [];
     recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
     recorder.onerror = () => { stopExport(true); showToast('Xuất video thất bại.'); };
@@ -668,11 +687,10 @@ async function startExport() {
     recorder.start(1000);
     startPlayback();
   } catch (error) {
-    state.exportStream?.getVideoTracks().forEach((track) => track.stop());
-    state.exportCanvas = null;
-    state.exporting = false;
-    document.querySelector('.app-shell').inert = false;
-    elements['start-export'].disabled = false;
+    if (run !== state.exportRun) return;
+    state.exportCancelled = true;
+    if (state.recorder?.state === 'recording') state.recorder.stop();
+    else finishExport([], mimeType);
     showToast(error instanceof Error ? error.message : 'Không thể bắt đầu xuất video.');
   }
 }
@@ -715,6 +733,8 @@ function bindEvents() {
   elements['export-button'].addEventListener('click', () => { if (!projectDuration()) { showToast('Hãy thêm media vào timeline trước.'); return; } elements['export-dialog'].showModal(); });
   elements['close-export'].addEventListener('click', () => { if (state.exporting) stopExport(true); elements['export-dialog'].close(); });
   elements['cancel-export'].addEventListener('click', () => { if (state.exporting) stopExport(true); else elements['export-dialog'].close(); });
+  elements['export-resolution'].addEventListener('change', updateExportSettings);
+  setupPrecisionWheel({state, elements, renderTimeline, seekTo, pausePlayback});
   elements['start-export'].addEventListener('click', () => { void startExport(); });
   elements['export-dialog'].addEventListener('cancel', () => { if (state.exporting) stopExport(true); });
   window.addEventListener('beforeunload', () => { for (const asset of state.assets.values()) URL.revokeObjectURL(asset.url); state.audioGraph?.context.close(); });

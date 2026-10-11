@@ -12,7 +12,7 @@ export function setupKaraoke({ state, elements, renderAll, renderTimeline, syncP
   elements['text-overlay'] = $('text-overlay');
   document.querySelector('.transport').insertAdjacentHTML('afterend', `<div class="precise-transport"><span>Căn lời</span><button id="frame-back" title="Lùi 10 ms">−10 ms</button><input id="precise-time" type="number" aria-label="Vị trí con trỏ (giây)" min="0" step="0.001" value="0.000"><span>s</span><button id="frame-next" title="Tiến 10 ms">+10 ms</button><select id="preview-speed" aria-label="Tốc độ nghe thử"><option value="1">Nghe 1×</option><option value="0.75">Nghe 0.75×</option><option value="0.5">Nghe 0.5×</option></select></div>`);
   const panel = document.createElement('div'); panel.id = 'text-properties'; panel.hidden = true; panel.className = 'text-properties';
-  panel.innerHTML = `<section class="text-section"><div class="property-heading"><span>CHỮ & LỜI KARAOKE</span><span class="karaoke-badge">NÂNG CAO</span></div>
+  panel.innerHTML = `<p class="property-wheel-tip">Cuộn để di chuyển bảng · Alt + cuộn ô số để chỉnh. Chọn độ nhạy trên timeline; Rất thấp = 1 ms với mốc thời gian.</p><section class="text-section"><div class="property-heading"><span>CHỮ & LỜI KARAOKE</span><span class="karaoke-badge">NÂNG CAO</span></div>
     <label>Nội dung<textarea id="text-content" rows="3" maxlength="2000" placeholder="Nhập lời bài hát…"></textarea></label>
     <div class="text-buttons"><button id="duplicate-text">Nhân đôi câu</button><button id="preview-text">▶ Nghe thử câu</button><label class="check-inline"><input type="checkbox" id="loop-text"> Lặp</label></div>
     <div class="input-grid">${field('text-start','Hiện từ (giây)',0,86400,0.001)}${field('text-end','Ẩn tại (giây)',0,86400,0.001)}</div>
@@ -130,6 +130,7 @@ export function setupKaraoke({ state, elements, renderAll, renderTimeline, syncP
         };
         const cell = document.createElement('div'); cell.className = 'timing-cell';
         const input = numberCell(word[key], `${word.word}: ${key === 'start' ? 'bắt đầu' : 'kết thúc'}`, update);
+        input.dataset.wheelKey = `word:${index}:${key}`;
         const stamp = document.createElement('button'); stamp.textContent = '◎'; stamp.title = 'Lấy mốc tại con trỏ'; stamp.ariaLabel = `Lấy mốc ${key === 'start' ? 'bắt đầu' : 'kết thúc'} cho ${word.word}`;
         stamp.onclick = () => update(Math.max(0, animationTime(c, state.playhead)));
         cell.append(input, stamp); row.append(cell);
@@ -146,6 +147,7 @@ export function setupKaraoke({ state, elements, renderAll, renderTimeline, syncP
             c.karaoke.points = next; renderAll();
           };
           const input = numberCell(point[key], `Mốc ${index + 1}: ${key === 'time' ? 'giây' : '% màu'}`, update, { max: key === 'time' ? 7200 : 100, step: 0.001 });
+          input.dataset.wheelKey = `point:${index}:${key}`;
           if (key === 'progress' && (index === 0 || index === c.karaoke.points.length - 1)) input.disabled = true;
           row.append(input);
         }

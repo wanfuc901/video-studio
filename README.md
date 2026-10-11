@@ -20,7 +20,7 @@ Sau đó truy cập `http://localhost:8765`. Tệp nhập được giữ trong b
 - **Mốc tốc độ tùy chỉnh**: các cặp giây/% màu tạo đường chạy theo đoạn. Hai mốc cùng % giữ màu tại chỗ cho đoạn ngân. Mốc giây tăng dần, % không giảm, bắt đầu 0% và kết thúc 100%.
 - Phông, cỡ chữ, màu gốc/màu chạy, viền, vị trí, độ rộng, độ hiện rõ, căn lề và nền tối tùy chỉnh được. Nội dung nhiều dòng tự xuống hàng theo độ rộng.
 - Nghe thử 0.5×/0.75×, lặp câu và tua ±10 ms để căn nhịp; tốc độ nghe thử không làm thay đổi tốc độ video xuất. Độ chính xác thực tế khi phát/xuất còn phụ thuộc nhịp khung hình và media trong trình duyệt.
-- Chữ được vẽ bằng cùng một bộ dựng canvas cho xem trước và xuất WebM 1280 × 720, 30 fps; có thể dùng chữ trên nền đen mà không cần video nền.
+- Chữ được vẽ bằng cùng một bộ dựng canvas cho xem trước và xuất WebM 1920 × 1080 hoặc 1280 × 720, 30 fps; có thể dùng chữ trên nền đen mà không cần video nền.
 
 Mốc màu luôn tính từ câu gốc: `thời_gian_màu = (thời_gian_video - bắt_đầu_clip + cắt_đầu - thời_gian_chờ) × tốc_độ_màu`.
 
@@ -90,3 +90,23 @@ Bộ local có launcher Windows; hướng dẫn CPU/GPU, macOS/Linux và xử l�
 Kiểm tra bổ sung: nhập phụ đề và dịch mốc, điệp khúc lặp, tiếng Việt thiếu dấu, từ nghe sai/thiếu, WAV PCM16, request API/mốc từng từ, key và localhost, hạn mức, xác thực/origin/kích thước của bộ local. `node --test tests/*.test.mjs` và `python -m unittest discover -s tests -p 'test_*.py'`. Kết nối Groq được kiểm tra CORS và hợp đồng request bằng mock; chưa chạy nhận diện với key thật của người dùng. Chưa có kiểm thử đầu-cuối trên trình duyệt hoặc GPU Windows.
 
 Đã chạy nhận diện thực tế mẫu âm thanh 5 giây với Faster Whisper Tiny trên CPU int8, trả về từ và mốc hợp lệ. Bộ cài giới hạn `av<19` vì Faster Whisper 1.2.1 chưa tương thích thay đổi `metadata_errors` của PyAV 19. Tổng cộng 41 kiểm tra JavaScript và 5 kiểm tra Python đạt.
+
+
+## Xuất 1080p và cuộn chính xác
+
+Hộp **Xuất video** mặc định **1080p Full HD (1920 × 1080), 30 fps**, bitrate mục tiêu 12 Mbps. Có thể chọn 720p (6 Mbps) để giảm dung lượng. Cả video và chữ karaoke được dựng ở kích thước xuất đã chọn. Tệp tải xuống có hậu tố `-1080p.webm` hoặc `-720p.webm`. Xuất vẫn theo thời gian thực; chất lượng nguồn thấp không tự tăng chi tiết khi xuất 1080p.
+
+Chọn **Độ nhạy chuột** ngay trên timeline: **Rất thấp / Chậm / Vừa / Nhanh**. Lựa chọn được nhớ trên trình duyệt, mặc định Chậm.
+
+| Thao tác | Kết quả |
+| --- | --- |
+| Lăn chuột trên timeline | Di chuyển ngang timeline |
+| Shift + lăn chuột | Cuộn dọc các track |
+| Ctrl / Command + lăn chuột | Phóng to/thu nhỏ quanh vị trí chuột |
+| Alt + lăn chuột trên timeline | Tua con trỏ từng 1 / 10 / 50 / 100 ms theo độ nhạy |
+| Lăn chuột trong bảng thuộc tính | Cuộn bảng, không vô tình đổi ô số đang chọn |
+| Alt + lăn chuột trên ô số/thanh trượt | Tăng/giảm giá trị; độ nhạy Rất thấp dùng bước nhỏ nhất của ô |
+
+Các ô mốc thời gian hỗ trợ bước 0.001 giây ở mức Rất thấp. Giá trị vẫn tuân theo giới hạn của từng thuộc tính và có thể hoàn tác. Độ chia mốc 1 ms không đồng nghĩa video xuất có khung hình mỗi 1 ms: video 30 fps có khoảng cách khung hình khoảng 33.3 ms.
+
+Toàn bộ **50 kiểm tra JavaScript đạt**. Các ca mới kiểm tra kích thước canvas xuất, bitrate, âm thanh, hủy trong lúc chuẩn bị, dọn trạng thái khi encoder lỗi, phóng timeline quanh chuột, bước thời gian và phân biệt cuộn bảng với sửa số. MediaRecorder/canvas được giả lập trong kiểm tra xuất; chưa kiểm thử tệp WebM 1080p thực tế và thao tác giao diện đầu-cuối trên trình duyệt trong phiên này.
