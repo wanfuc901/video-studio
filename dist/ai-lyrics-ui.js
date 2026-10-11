@@ -3,14 +3,15 @@ import { SAMPLE_RATE, validateRange, normalizeWords, groupWords, updateCueText, 
 import { parseLyrics, timedLyricsInRange, alignLyrics } from './lyrics-import.js';
 import { PROVIDERS, transcribeAPI, checkLocal, localEndpoint } from './ai-providers.js';
 
-export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,renderAll,revealClip,showToast}) {
+export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,renderAll,revealClip,showToast,onSessionChange=()=>{}}) {
   const $=id=>document.getElementById(id);
   $('add-karaoke').insertAdjacentHTML('afterend','<button id="ai-lyrics-button" class="karaoke-add ai-lyrics-button"><span class="ai-star">✦</span><span><strong>Tạo lời bằng AI</strong><small>Nghe âm thanh · tự căn mốc lời</small></span></button>');
+  $('ai-lyrics-button').insertAdjacentHTML('afterend','<button id="align-lyrics-button" class="karaoke-add align-lyrics-button"><span class="text-glyph">♫</span><span><strong>Có lyrics → AI ráp lời</strong><small>Dán lời chuẩn · AI nghe lấy mốc từng từ</small></span></button>');
   document.body.insertAdjacentHTML('beforeend',`<dialog id="ai-lyrics-dialog" class="ai-dialog">
     <div class="ai-heading"><div><span class="eyebrow">AI • NHẬN DIỆN LỜI</span><h2>Lời chuẩn, nhịp theo video</h2></div><button id="ai-close" class="icon-button" aria-label="Đóng tạo lời AI">×</button></div>
-    <p class="ai-intro">Chọn video hoặc âm thanh <strong>còn giọng hát / lời nói</strong>. AI tạo lời và mốc từng từ để bạn sửa trước khi thêm vào timeline.</p>
+    <p class="ai-intro">Chọn video hoặc âm thanh <strong>còn giọng hát / lời nói</strong>. Dán lyrics của bạn để AI nghe lấy mốc, rồi ráp lại đúng chữ và cách xuống dòng bạn cung cấp. Hoặc chọn AI tự tạo lời khi chưa có lyrics.</p>
     <fieldset id="ai-options">
-    <label>Cách tạo lời<select id="ai-mode"><option value="auto">AI tự nghe và tạo lời</option><option value="align">Đã có lyrics · AI căn theo lời của tôi</option><option value="timed">Nhập SRT / LRC có mốc · không cần AI</option></select></label>
+    <label>Cách tạo lời<select id="ai-mode"><option value="auto">AI tự nghe và tạo lời</option><option value="align" selected>Đã có lyrics · AI căn theo lời của tôi</option><option value="timed">Nhập SRT / LRC có mốc · không cần AI</option></select></label>
     <section id="ai-lyrics-input" hidden><div class="ai-import-row"><label class="ai-file-label">Nhập TXT / SRT / LRC<input id="ai-lyrics-file" type="file" accept=".txt,.srt,.lrc,text/plain"></label><span id="ai-lyrics-file-name" class="input-hint"></span></div>
     <label>Lời của đoạn đang chọn<textarea id="ai-supplied-lyrics" rows="6" maxlength="30000" placeholder="Dán lời ở đây, mỗi câu một dòng…"></textarea></label>
     <p class="input-hint" id="ai-lyrics-hint">Chỉ dán lời thuộc đoạn âm thanh đã chọn, đúng thứ tự kể cả điệp khúc lặp. AI lấy mốc từ âm thanh rồi khớp với lời này. Các từ chưa khớp sẽ có mốc ước lượng. Sửa lời và bấm lại sẽ dùng kết quả nghe đã có, không cần chạy model lại.</p></section>
@@ -21,7 +22,7 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
     <div id="ai-local-settings" hidden><div class="ai-grid ai-two"><label>Địa chỉ bộ chạy local<input id="ai-local-url" value="http://127.0.0.1:8766" autocomplete="off"></label><label>Mã kết nối local<input id="ai-local-key" type="password" autocomplete="off" spellcheck="false" placeholder="Mã hiện trong cửa sổ chạy local"></label></div><div class="ai-import-row"><button id="ai-local-test" class="button button-ghost" type="button">Kiểm tra kết nối</button><a href="https://github.com/wanfuc901/video-studio/tree/main/tools/local-ai" target="_blank" rel="noopener noreferrer">Cài bộ chạy trên Windows / CPU / GPU ↗</a></div><p id="ai-local-status" class="input-hint" role="status"></p></div>
     <div class="ai-grid"><label>Ngôn ngữ<select id="ai-language"><option value="vietnamese">Tiếng Việt</option><option value="english">Tiếng Anh</option><option value="auto">Tự nhận diện</option><option value="chinese">Tiếng Trung</option><option value="korean">Tiếng Hàn</option><option value="japanese">Tiếng Nhật</option></select></label><label>Mô hình<select id="ai-model"><option value="base">Base · cân bằng</option><option value="tiny">Tiny · nhẹ, thử nhanh</option><option value="small">Small · lớn hơn, chậm hơn</option></select></label><label>Tối đa từ / câu<select id="ai-line-length"><option value="6">6 từ</option><option value="8" selected>8 từ</option><option value="10">10 từ</option><option value="12">12 từ</option></select></label></div></div>
     </fieldset>
-    <div class="ai-note"><strong id="ai-provider-title"></strong><p id="ai-provider-note"></p><p id="ai-quality-note">Lời có sẵn giúp giảm sửa nội dung; thời gian nghe của model vẫn phụ thuộc thiết bị. Mốc karaoke cần kiểm tra lại, nhất là nhạc nền lớn hoặc đoạn ngân. Tối đa 10 phút / lần, tệp nguồn 300 MB.</p></div>
+    <div class="ai-note"><strong id="ai-provider-title"></strong><p id="ai-provider-note"></p><p id="ai-quality-note">Lời có sẵn giúp giảm sửa nội dung; thời gian nghe của model vẫn phụ thuộc thiết bị. Mốc karaoke cần kiểm tra lại, nhất là nhạc nền lớn hoặc đoạn ngân. Tối đa 10 phút / lần, tệp nguồn 300 MB. Lyrics và kết quả hoàn tất được tự lưu; F5 khi AI đang chạy cần nhận diện lại.</p></div>
     <div id="ai-progress-panel" hidden><div class="ai-progress"><progress id="ai-progress" max="1"></progress><span id="ai-progress-label" role="status" aria-live="polite"></span></div><p id="ai-elapsed" class="input-hint"></p></div>
     <p id="ai-error" class="ai-error" role="alert" hidden></p>
     <section id="ai-review" hidden><div class="ai-review-heading"><h3>Xem và sửa lời</h3><span id="ai-result-count"></span></div><p class="input-hint">Mốc bên dưới là giây trên timeline. Sửa nội dung tại đây; chỉnh nhịp từng từ sau khi chèn. Nếu đổi số từ trong câu, mốc từ của câu đó được chia lại.</p><div id="ai-cue-list"></div><p id="ai-result-note" class="input-hint"></p></section>
@@ -29,7 +30,7 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
   </dialog>`);
   const dialog=$('ai-lyrics-dialog');
   let sources=new Map(),worker=null,jobId=0,busy=false,cues=[],resultOffset=0,timer=null,startedAt=0,request=null,lastResult=null,activeLyrics=null,activeSignature="",summary="";
-  function clearResult() { cues=[];$('ai-review').hidden=true;$('ai-insert-button').disabled=true;$('ai-cue-list').replaceChildren();summary=''; }
+  function clearResult() { cues=[];$('ai-review').hidden=true;$('ai-insert-button').disabled=true;$('ai-cue-list').replaceChildren();summary='';onSessionChange(); }
   function message(text,progress=null) {
     $('ai-progress-panel').hidden=false;$('ai-progress-label').textContent=text;
     if(progress===null)$('ai-progress').removeAttribute('value');else $('ai-progress').value=progress;
@@ -50,9 +51,9 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
     $('ai-from').value=source.sourceStart.toFixed(3);$('ai-to').value=Math.min(source.asset.duration,source.sourceStart+Math.min(source.duration,600)).toFixed(3);$('ai-insert').value=source.start.toFixed(3);
     $('ai-source-note').textContent=source.clipId?'Dùng âm thanh gốc của clip này, kể cả khi clip đang tắt tiếng. Không trộn các track khác.':'Dùng âm thanh của tệp gốc. Vị trí chèn mặc định là con trỏ hiện tại.';
   }
-  function open() {
-    if(state.exporting)return;
-    pausePlayback();sources=new Map();$('ai-source').replaceChildren();clearResult();$('ai-error').hidden=true;$('ai-progress-panel').hidden=true;
+  function rebuildSources() {
+    const previous=$('ai-source').value;
+    sources=new Map();$('ai-source').replaceChildren();
     const selected=getSelectedClip();let preferred=null;
     for(const clip of state.clips){const asset=state.assets.get(clip.assetId);if(!asset||!['video','audio'].includes(asset.kind))continue;
       const key='clip:'+clip.id;sources.set(key,{asset,clipId:clip.id,sourceStart:clip.sourceStart,duration:clip.duration,start:clip.start});
@@ -63,10 +64,17 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
       const key='asset:'+asset.id;sources.set(key,{asset,sourceStart:0,duration:asset.duration,start:state.playhead});
       const option=document.createElement('option');option.value=key;option.textContent='Tệp gốc · '+asset.file.name;$('ai-source').append(option);
     }
+    if(sources.has(previous))preferred=previous;
     if(!preferred)preferred=[...sources].find(([,s])=>s.asset.kind==='video')?.[0] || sources.keys().next().value;
-    if(preferred){$('ai-source').value=preferred;sourceChanged();}
-    else error('Hãy thêm video hoặc file âm thanh vào thư viện trước.');
-    setBusy(false);refreshControls();dialog.showModal();
+    if(preferred){$('ai-source').value=preferred;if(previous!==preferred)sourceChanged();}
+    return !!preferred;
+  }
+  function open(mode) {
+    if(state.exporting)return;
+    pausePlayback();$('ai-error').hidden=true;
+    if(!rebuildSources())error('Hãy thêm video hoặc file âm thanh vào thư viện trước.');
+    if(typeof mode==='string' && $('ai-mode').value!==mode){$('ai-mode').value=mode;clearResult();}
+    setBusy(false);refreshControls();if(cues.length)renderReview();dialog.showModal();onSessionChange();
   }
   async function extractAudio(file,from,to,id) {
     if(file.size>300*1024*1024)throw new Error('Tệp lớn hơn 300 MB. Hãy dùng bản MP3/WAV có giọng hát hoặc video đã cắt ngắn.');
@@ -96,12 +104,12 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
       const row=document.createElement('div');row.className='ai-cue';if(cue.words.some(w=>w.estimated))row.classList.add('ai-cue-warning');
       const time=document.createElement('span');time.textContent=`${index+1} · ${(resultOffset+cue.start).toFixed(3)} → ${(resultOffset+cue.end).toFixed(3)}s`;
       const input=document.createElement('textarea');input.rows=2;input.value=cue.text;input.maxLength=2000;input.ariaLabel=`Nội dung câu ${index+1}`;
-      input.addEventListener('input',()=>{updateCueText(cue,input.value);$('ai-insert-button').disabled=!cues.some(c=>c.text.trim());});
+      input.addEventListener('input',()=>{updateCueText(cue,input.value);$('ai-insert-button').disabled=!cues.some(c=>c.text.trim());onSessionChange();});
       if(cue.words.some(w=>w.estimated)){const badge=document.createElement('small');badge.className='ai-review-badge';badge.textContent='Mốc ước lượng · cần nghe lại';row.append(badge);}row.append(time,input);$('ai-cue-list').append(row);
     });
     $('ai-result-count').textContent=`${cues.length} câu`;
     $('ai-result-note').textContent=summary+' '+(cues.some(c=>c.words.some(w=>w.estimated))?'Các mốc từ được đánh dấu là ước lượng. Bạn có thể chỉnh lại sau khi chèn.':'Mốc từ do AI dự đoán. Hãy kiểm tra lại nhịp khi nghe thử.');
-    $('ai-insert-button').disabled=!cues.length;
+    $('ai-insert-button').disabled=!cues.some(c=>c.text.trim());onSessionChange();
   }
   function ensureWorker() {
     if(worker)return worker;
@@ -150,7 +158,7 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
     $('ai-provider-title').textContent=mode==='timed'?'Nhập lời có mốc · không chạy AI':notes[provider][0];
     $('ai-provider-note').textContent=mode==='timed'?'SRT/LRC có thể dùng với beat đã bỏ giọng hát. Giữ mốc câu từ file; các mốc từ là ước lượng, không phải kết quả AI.':notes[provider][1];
   }
-  $('ai-lyrics-button').onclick=open;$('ai-source').onchange=sourceChanged;
+  $('ai-lyrics-button').onclick=()=>open();$('align-lyrics-button').onclick=()=>open('align');$('ai-source').onchange=sourceChanged;
   $('ai-provider').onchange=()=>{clearResult();refreshControls(true);};
   $('ai-mode').onchange=()=>{clearResult();refreshControls();};
   for(const id of ['ai-from','ai-to','ai-insert','ai-language','ai-model','ai-line-length','ai-supplied-lyrics','ai-local-url'])$(id).addEventListener('input',clearResult);
@@ -217,5 +225,22 @@ export function setupAILyrics({state,elements,getSelectedClip,pausePlayback,rend
   $('ai-cancel').onclick=cancel;$('ai-close').onclick=()=>{cancel();dialog.close();};dialog.addEventListener('cancel',cancel);
   // Once the dialog closes, release model memory; browser cache can reuse its downloaded files.
   dialog.addEventListener('close',()=>{cancel();worker?.terminate();worker=null;});
-  return {open};
+  // Explicit whitelist: credentials are deliberately excluded from persisted drafts.
+  const draftFields=['ai-mode','ai-source','ai-from','ai-to','ai-insert','ai-provider','ai-language','ai-model','ai-line-length','ai-supplied-lyrics','ai-local-url'];
+  function snapshot() {
+    return structuredClone({fields:Object.fromEntries(draftFields.map(id=>[id,$(id).value])),cues,resultOffset,summary,lastResult});
+  }
+  function restore(draft) {
+    if(!draft)return;
+    rebuildSources();
+    const fields=draft.fields||{};
+    if(fields['ai-provider'])$('ai-provider').value=fields['ai-provider'];
+    refreshControls(true);
+    for(const id of draftFields)if(typeof fields[id]==='string')$(id).value=fields[id];
+    refreshControls();
+    if(!sources.has($('ai-source').value)){clearResult();return;}
+    cues=Array.isArray(draft.cues)?draft.cues:[];resultOffset=draft.resultOffset||0;summary=draft.summary||'';lastResult=draft.lastResult||null;
+    if(cues.length)renderReview();
+  }
+  return {open,snapshot,restore};
 }

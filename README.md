@@ -9,7 +9,7 @@ cd dist
 python -m http.server 8765
 ```
 
-Sau đó truy cập `http://localhost:8765`. Tệp nhập được giữ trong bộ nhớ của tab hiện tại; tải trang lại sẽ bắt đầu dự án mới. Quá trình xuất diễn ra theo thời gian thực nên video 1 phút cần khoảng 1 phút để tạo.
+Sau đó truy cập `http://localhost:8765`. Phiên làm việc và tệp media tự lưu trong IndexedDB của trình duyệt; mở lại cùng địa chỉ để tiếp tục sau khi trạng thái báo Đã lưu. Quá trình xuất diễn ra theo thời gian thực nên video 1 phút cần khoảng 1 phút để tạo.
 
 ## Chữ và karaoke
 
@@ -73,7 +73,7 @@ Trong **Tạo lời bằng AI**, chọn một trong ba cách:
 - **Đã có lyrics**: dán lời hoặc nhập TXT, mỗi câu một dòng, chỉ gồm lời của đoạn âm thanh đang chọn. Giữ nguyên nội dung và cách chia câu. Ứng dụng nhận diện âm thanh rồi khớp chuỗi từ theo thứ tự, kể cả điệp khúc lặp; từ thiếu/khác được nội suy và đánh dấu để nghe lại. Đây là khớp với bản nhận diện, chưa phải forced alignment âm vị. Không đảm bảo tuyệt đối với giọng hát/ngân hoặc nhạc nền lớn.
 - **Nhập SRT/LRC có mốc**: giữ mốc câu, không chạy AI. Mốc tính từ đầu tệp nguồn, được cắt theo Từ–Đến và dịch tới vị trí Chèn trên timeline. LRC hỗ trợ nhiều timestamp trên một dòng, offset và mốc trống kết thúc câu; câu cuối không có mốc kết thúc dùng cuối đoạn chọn. Mốc từng từ được chia đều và đánh dấu ước lượng. Các câu chồng nhau bị từ chối để sửa trước khi chèn.
 
-Kết quả nghe mới nhất được giữ trong tab: sửa lyrics/chia câu/vị trí chèn rồi bấm lại sẽ dùng mốc đã có. Đổi nguồn, đoạn, model, ngôn ngữ hoặc nơi chạy sẽ nhận diện lại. Lyrics có sẵn giúp giảm thời gian sửa nội dung; không tự làm model nghe nhanh hơn.
+Kết quả nghe hoàn tất mới nhất được tự lưu cùng phiên: sửa lyrics/chia câu/vị trí chèn rồi bấm lại sẽ dùng mốc đã có. Đổi nguồn, đoạn, model, ngôn ngữ hoặc nơi chạy sẽ nhận diện lại. Lyrics có sẵn giúp giảm thời gian sửa nội dung; không tự làm model nghe nhanh hơn.
 
 ### Nơi chạy
 
@@ -110,3 +110,20 @@ Chọn **Độ nhạy chuột** ngay trên timeline: **Rất thấp / Chậm / V
 Các ô mốc thời gian hỗ trợ bước 0.001 giây ở mức Rất thấp. Giá trị vẫn tuân theo giới hạn của từng thuộc tính và có thể hoàn tác. Độ chia mốc 1 ms không đồng nghĩa video xuất có khung hình mỗi 1 ms: video 30 fps có khoảng cách khung hình khoảng 33.3 ms.
 
 Toàn bộ **50 kiểm tra JavaScript đạt**. Các ca mới kiểm tra kích thước canvas xuất, bitrate, âm thanh, hủy trong lúc chuẩn bị, dọn trạng thái khi encoder lỗi, phóng timeline quanh chuột, bước thời gian và phân biệt cuộn bảng với sửa số. MediaRecorder/canvas được giả lập trong kiểm tra xuất; chưa kiểm thử tệp WebM 1080p thực tế và thao tác giao diện đầu-cuối trên trình duyệt trong phiên này.
+
+
+## Tự lưu phiên, F5 tiếp tục làm việc
+
+Bản mới tự lưu vào **trình duyệt hiện tại, trên cùng máy và cùng địa chỉ website**: tệp video/ảnh/âm thanh, tên dự án, toàn bộ clip và chữ/karaoke, các mốc và định dạng, âm lượng, lịch sử hoàn tác/làm lại, độ phóng và vị trí timeline, độ phân giải xuất. Mở lại sẽ khôi phục media từ dữ liệu tệp đã lưu, tạo URL mới và giữ phát video ở trạng thái dừng.
+
+Thanh trạng thái luôn hiện **Đang lưu phiên / Đã lưu / Lỗi lưu**. Chờ **Đã lưu trên trình duyệt** trước khi F5 hoặc đóng tab. Nếu còn đang nhập media hoặc chưa lưu xong, ứng dụng yêu cầu trình duyệt cảnh báo trước khi rời trang. Hết dung lượng hoặc quyền lưu bị chặn sẽ báo lỗi, không giả báo thành công; có nút thử lưu lại. Không xóa bản lưu cũ khi một lần ghi thất bại. Hai tab cùng chỉnh một phiên: tab có bản cũ bị chặn ghi đè, hãy tiếp tục ở tab đã cập nhật mới nhất.
+
+Media chỉ ghi một lần; metadata và media mới commit chung giao dịch. Ứng dụng xin chế độ lưu bền của trình duyệt khi nhập media, nhưng trình duyệt có thể từ chối. Xóa dữ liệu website, dùng ẩn danh, đổi trình duyệt/máy hoặc đổi địa chỉ sẽ không giữ cùng phiên. Đây chưa phải đồng bộ đám mây. Tab chạy bản cũ chưa có tính năng tự lưu không thể tự khôi phục các chỉnh sửa trước lần nâng cấp này.
+
+### Lyrics của bạn + mốc AI
+
+Nhấn **Có lyrics → AI ráp lời** → dán lời hoặc nhập TXT → chọn video/âm thanh còn giọng hát và khoảng cần căn → **Căn theo lyrics** → kiểm tra → **Thêm lời vào timeline**. AI nhận diện tiếng hát để lấy mốc, sau đó khớp theo thứ tự với lời bạn cung cấp; giữ chính tả, dấu câu và cách chia dòng của lyrics. Mốc không khớp được đánh dấu ước lượng, vẫn cần nghe lại đoạn ngân hoặc từ nhận diện sai. Beat đã tách giọng không đủ để AI nghe lấy mốc.
+
+Lời đã dán, nguồn, khoảng thời gian, nơi chạy/model, các câu đã sửa trong bước xem lại và kết quả nghe hoàn tất cũng được tự lưu. Sau F5, sửa lyrics rồi bấm căn lại cùng nguồn/đoạn/model sẽ dùng lại kết quả nghe, không cần gọi AI lần nữa. Không lưu API key/mã local; tác vụ AI đang chạy và tác vụ xuất không tiếp tục qua F5, cần chạy lại nếu chưa hoàn tất.
+
+Tổng cộng **60 kiểm tra JavaScript đạt**. Kiểm tra bổ sung dùng giao dịch IndexedDB giả lập và DOM giả lập: media giữ đúng byte qua lần mở kho mới; ghi lỗi giữ nguyên bản cũ; chặn ghi đè giữa tab; gom các sửa đổi trong lúc ghi; thử lại lỗi dung lượng; khôi phục lịch sử và URL media; bản nháp lyrics/cache AI vẫn ráp được đúng lời sau mở lại. Chưa có kiểm thử F5, hạn mức lưu trữ hoặc tải media đầu-cuối trên trình duyệt thực trong phiên này.

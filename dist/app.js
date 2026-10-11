@@ -1,3 +1,4 @@
+import { createSessionStore, SessionAutosaver, projectRecord } from './session-store.js';
 import { exportPreset, setupPrecisionWheel } from './precision-tools.js';
 import { setupAILyrics } from './ai-lyrics-ui.js';
 import { EditHistory, fitStage, revealTimeline, shortcutFor } from './editor-tools.js';
@@ -39,7 +40,9 @@ const getAsset = (clip) => clip.track === 'text' ? { kind: 'text', duration: MAX
 const getSelectedClip = () => state.clips.find((clip) => clip.id === state.selectedId);
 const projectDuration = () => state.clips.reduce((maximum, clip) => Math.max(maximum, clip.start + clip.duration), 0);
 const assetLimit = (asset) => asset.kind === 'image' ? MAX_IMAGE_DURATION : asset.duration;
-const editHistory = new EditHistory(snapshotProject());
+let editHistory = new EditHistory(snapshotProject());
+let sessionAutosaver = null, restoringSession = true, mediaImports = 0, unsavedWithoutStore = false;
+function saveSession() { if (!restoringSession) { if(sessionAutosaver)sessionAutosaver.schedule();else unsavedWithoutStore=true; } }
 
 function snapshotProject() {
   return { data: { clips: state.clips, projectName: elements['project-name'].value, globalMute: state.globalMute },
@@ -51,6 +54,7 @@ function recordEdit(group = null) {
   editHistory.record(snapshotProject(), group || state.wheelEditGroup || null);
   document.getElementById('undo-button').disabled = !editHistory.canUndo;
   document.getElementById('redo-button').disabled = !editHistory.canRedo;
+  saveSession();
 }
 
 function restoreEdit(direction) {
@@ -195,16 +199,21 @@ async function createAsset(file) {
 async function importFiles(fileList) {
   const files = Array.from(fileList);
   if (!files.length) return;
+  mediaImports++;
+  void navigator.storage?.persist?.().catch(() => {});
   const failures = [];
   for (const file of files) {
     try {
       const asset = await createAsset(file);
       state.assets.set(asset.id, asset);
+      saveSession();
     } catch (error) {
       failures.push(error instanceof Error ? error.message : `${file.name}: không thể mở tệp.`);
     }
   }
+  mediaImports--;
   renderAssets();
+  saveSession();
   if (failures.length) showToast(failures[0]);
   else showToast(`Đã thêm ${files.length} tệp vào thư viện.`);
 }
@@ -423,6 +432,7 @@ function pausePlayback() {
   for (const audio of state.audioElements.values()) audio.pause();
   elements['play-button'].innerHTML = icon('play');
   elements['play-button'].ariaLabel = 'Phát';
+  if(!state.exporting)saveSession();
 }
 
 function startPlayback() {
@@ -455,6 +465,7 @@ function tick(now) {
 
 function seekTo(seconds) {
   state.playhead = clamp(seconds, 0, projectDuration());
+  saveSession();
   renderPlayhead();
   syncPreview();
 }
@@ -737,10 +748,77 @@ function bindEvents() {
   setupPrecisionWheel({state, elements, renderTimeline, seekTo, pausePlayback});
   elements['start-export'].addEventListener('click', () => { void startExport(); });
   elements['export-dialog'].addEventListener('cancel', () => { if (state.exporting) stopExport(true); });
-  window.addEventListener('beforeunload', () => { for (const asset of state.assets.values()) URL.revokeObjectURL(asset.url); state.audioGraph?.context.close(); });
+  window.addEventListener('beforeunload', event => {
+    if (state.drag) stopClipDrag();
+    if (sessionAutosaver?.pending || mediaImports || unsavedWithoutStore) {
+      void sessionAutosaver?.flush();event.preventDefault();event.returnValue = '';
+    }
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {saveSession();void sessionAutosaver?.flush();}
+  });
+  // Capture view changes and unfinished AI drafts, including controls outside renderAll.
+  for (const type of ['input','change']) document.addEventListener(type, event => {
+    if (event.target.type !== 'password' && event.target.type !== 'file') saveSession();
+  });
+  let viewTimer;
+  const saveView = () => {clearTimeout(viewTimer);viewTimer=setTimeout(saveSession,200);};
+  elements['timeline-scroll'].addEventListener('scroll',saveView);
+  document.addEventListener('pointerup',saveView);
+  document.addEventListener('wheel',saveView,{passive:true});
+  document.getElementById('retry-session-save').onclick=()=>{saveSession();void sessionAutosaver?.flush();};
 }
 
 const karaokeUI = setupKaraoke({ state, elements, renderAll, renderTimeline, syncPreview, seekTo, startPlayback, pausePlayback, showToast, getSelectedClip, recordEdit, revealClip, duplicateSelectedClip });
-setupAILyrics({ state, elements, getSelectedClip, pausePlayback, renderAll, revealClip, showToast });
+const aiLyricsUI = setupAILyrics({ state, elements, getSelectedClip, pausePlayback, renderAll, revealClip, showToast, onSessionChange:saveSession });
 bindEvents();
 renderAll();
+void restoreSession();
+
+function sessionStatus(status,error) {
+  const label=document.getElementById('session-status'),retry=document.getElementById('retry-session-save');
+  label.dataset.status=status;
+  label.textContent=status==='saving'?'● Đang lưu phiên…':status==='saved'?'● Đã lưu trên trình duyệt · F5 để tiếp tục':
+    error?.name==='QuotaExceededError'?'Không đủ dung lượng để lưu. Giữ tab này mở và giải phóng dung lượng.':
+    (error?.message || 'Không thể tự lưu. Giữ tab này mở và thử lại.');
+  retry.hidden=status!=='error'||!sessionAutosaver||error?.name==='SessionConflictError';
+}
+async function restoreSession() {
+  const shell=document.querySelector('.app-shell');shell.inert=true;
+  const store=createSessionStore();
+  try {
+    const loaded=await store.load(),project=loaded.project;
+    if(project) {
+      const restored=new Map();
+      try {
+        for(const item of loaded.assets) {
+          const file=new File([item.file],item.name,{type:item.type,lastModified:item.lastModified});
+          const asset={...item,file,url:URL.createObjectURL(file),image:null};restored.set(asset.id,asset);
+          if(asset.kind==='image'){asset.image=new Image();asset.image.src=asset.url;await asset.image.decode();}
+        }
+        for(const clip of project.clips)if(clip.track!=='text'&&!restored.has(clip.assetId))throw new Error('Thiếu media trong phiên lưu. Bản lưu được giữ nguyên.');
+      } catch(error){for(const a of restored.values())URL.revokeObjectURL(a.url);throw error;}
+      state.assets=new Map(project.assetIds.map(id=>[id,restored.get(id)]));state.clips=project.clips;
+      state.selectedId=project.selectedId;state.playhead=clamp(project.playhead||0,0,projectDuration());
+      state.zoom=clamp(project.zoom||52,24,600);state.globalMute=!!project.globalMute;
+      state.previewSpeed=[.5,.75,1].includes(project.previewSpeed)?project.previewSpeed:1;
+      elements['project-name'].value=project.projectName||'Dự án mới';
+      elements['zoom-slider'].value=state.zoom;document.getElementById('preview-speed').value=state.previewSpeed;
+      elements['export-resolution'].value=project.exportResolution==='720'?'720':'1080';updateExportSettings();
+      editHistory=new EditHistory(snapshotProject());
+      if(project.history){editHistory.past=project.history.past.slice(-100);editHistory.future=project.history.future.slice(-100);}
+      updateGlobalMuteButton();renderAssets();renderAll();
+      aiLyricsUI.restore(project.aiDraft);
+      elements['timeline-scroll'].scrollLeft=project.scrollLeft||0;elements['timeline-scroll'].scrollTop=project.scrollTop||0;
+      showToast('Đã khôi phục phiên: media, timeline, lời và lịch sử chỉnh sửa.');
+    }
+    sessionAutosaver=new SessionAutosaver({store,revision:loaded.revision,assetIds:project?.assetIds||[],
+      snapshot:()=>projectRecord({state,projectName:elements['project-name'].value,history:editHistory,
+        aiDraft:aiLyricsUI.snapshot(),scrollLeft:elements['timeline-scroll'].scrollLeft,scrollTop:elements['timeline-scroll'].scrollTop}),
+      assets:()=>[...state.assets.values()],onStatus:sessionStatus});
+    restoringSession=false;sessionStatus('saved');
+  } catch(error) {
+    restoringSession=false;
+    sessionStatus('error',new Error('Không khôi phục được phiên: '+error.message+' Không ghi đè bản lưu. Hãy thử mở lại trang.'));
+  } finally {shell.inert=false;}
+}

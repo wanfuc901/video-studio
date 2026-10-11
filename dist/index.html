@@ -30,10 +30,11 @@
   <div class="app-shell">
     <header class="topbar">
       <div class="brand"><span class="brand-mark"><span></span><span></span></span><span>frame<span class="brand-accent">flow</span></span></div>
-      <div class="project-heading"><span class="crumb">Không gian làm việc</span><svg class="icon"><use href="#i-chevron"/></svg><input id="project-name" aria-label="Tên dự án" value="Dự án mới" maxlength="60"><span class="saved-indicator">● Chỉ lưu trong phiên này</span></div>
+      <div class="project-heading"><span class="crumb">Không gian làm việc</span><svg class="icon"><use href="#i-chevron"/></svg><input id="project-name" aria-label="Tên dự án" value="Dự án mới" maxlength="60"></div>
       <div class="top-actions"><span class="shortcut-hint">Phím cách để phát / tạm dừng</span><button id="export-button" class="button button-primary"><svg class="icon"><use href="#i-download"/></svg><span>Xuất video</span></button></div>
     </header>
 
+    <div class="session-bar"><span id="session-status" role="status">Đang khôi phục phiên đã lưu…</span><button id="retry-session-save" type="button" hidden>Thử lưu lại</button><span class="session-note">Lưu trên máy này · không xóa dữ liệu trang web nếu muốn giữ phiên</span></div>
     <main class="workspace">
       <aside class="media-panel panel">
         <div class="panel-heading"><div><span class="eyebrow">TÀI NGUYÊN</span><h2>Thư viện media</h2></div><span id="asset-count" class="count-pill">0</span></div>
