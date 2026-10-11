@@ -5,3 +5,5 @@ preview*.png
 .venv/
 __pycache__/
 *.pyc
+tools/local-ai/.ai-home/
+node_modules/
