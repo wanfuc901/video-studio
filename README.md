@@ -26,6 +26,7 @@ Cài đặt, model và API ở [tools/local-ai/README.md](tools/local-ai/README.
 ## Xuất nhanh và hiệu năng
 
 - **Dựng nhanh (mặc định)**: Mediabunny + WebCodecs giải mã từng khung hình theo timestamp, vẽ chữ karaoke rồi mã hóa MP4. Không có khung đen khi chuyển clip, không hỏng khi đổi tab. Video ước tính trên 400 MB sẽ hỏi nơi lưu để ghi thẳng ra ổ đĩa. Tệp nguồn WebCodecs không giải mã được thì tự chuyển sang ghi thời gian thực.
+- **2 luồng mã hóa song song** (dự án từ 10 giây): timeline chia đôi tại khung hình khóa, mỗi nửa có bộ giải mã và bộ mã hóa phần cứng riêng, tiếng trộn song song, rồi ghép thành một track. Trên RTX 3050 + Chrome, 60 giây 1080p có MV, lời karaoke và nhạc xuất trong 7,7–8,5 giây (trước 11,1 giây). Một bộ mã hóa H.264 phần cứng của Chrome đạt khoảng 175 khung hình/giây, hai bộ khoảng 300; ba bộ trở lên không nhanh hơn. Nửa sau giữ trong RAM tới lượt ghi (khoảng 45 MB mỗi phút ở 12 Mbps). Nếu bộ mã hóa thứ hai không khởi động được hoặc cấu hình luồng khác nửa đầu, nửa đầu tự dựng tiếp phần còn lại, không phải xuất lại.
 - **Ghi thời gian thực**: giữ khung cuối khi video đang tải để không ghi khung đen, tự tạm dừng khi tab bị ẩn, ưu tiên MP4 nếu MediaRecorder hỗ trợ.
 - Timeline chỉ dựng các clip trong vùng nhìn thấy (thêm 1 màn hình mỗi bên); kéo clip chỉ cập nhật clip đó, mỗi khung hình một lần.
 - Lịch sử hoàn tác dùng chung các clip không đổi, nên bản lưu phiên không phình theo số bước. Tự lưu gom thay đổi trong 0,7 giây.

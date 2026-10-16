@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activeVisualAt, planFrameRuns, planAudioSegments, renderOfflineExport, frameCountFor, ExportDecodeError, supportsOfflineExport } from '../dist/offline-export.js';
+import { activeVisualAt, planFrameRuns, planAudioSegments, renderOfflineExport, frameCountFor, ExportDecodeError, supportsOfflineExport, planSlices, runsBetween, sameDecoderConfig } from '../dist/offline-export.js';
 
 const video = (id, start, duration, extra = {}) => ({ id, track: 'visual', assetId: 'v', start, duration, sourceStart: 0, volume: 1, muted: false, ...extra });
 const assets = new Map([
@@ -26,9 +26,25 @@ test('only the visible video clip is heard; muted, silent and global-muted clips
   assert.deepEqual(planAudioSegments({ clips, runs, fps: 10, assets, globalMute: true }), []);
 });
 
-// Minimal stand-in for Mediabunny and Web Audio: records which frames, timestamps and audio windows are produced.
-function fakeEnvironment({ decodable = true } = {}) {
-  const log = { frames: [], audio: [], requested: [], finalized: false, cancelled: false, disposed: 0 };
+// Minimal stand-in for Mediabunny, WebCodecs and Web Audio: records which frames, packets and audio windows are produced.
+// `descriptions[i]` is the avcC byte encoder i reports; `brokenEncoders` lists encoders whose configure() throws.
+function fakeEnvironment({ decodable = true, descriptions = [1, 1, 1], brokenEncoders = [] } = {}) {
+  const log = { frames: [], packetMeta: [], keyFrames: [], encoders: 0, closedEncoders: 0, audio: [], requested: [], finalized: false, cancelled: false, disposed: 0 };
+  class FakeVideoEncoder extends EventTarget {
+    static async isConfigSupported(config) { return { supported: config.codec === 'avc1.640028', config }; }
+    constructor({ output }) { super(); this.id = log.encoders++; this.output = output; this.encodeQueueSize = 0; this.state = 'unconfigured'; this.sent = 0; }
+    configure(config) { if (brokenEncoders.includes(this.id)) throw new Error('no hardware session'); this.config = config; this.state = 'configured'; }
+    encode(frame, { keyFrame }) {
+      if (keyFrame) log.keyFrames.push(frame.timestamp);
+      const meta = this.sent++ ? undefined : { decoderConfig: { codec: this.config.codec, codedWidth: 1, codedHeight: 1, description: new Uint8Array([descriptions[this.id]]) } };
+      const chunk = { timestamp: frame.timestamp, type: keyFrame ? 'key' : 'delta' };
+      queueMicrotask(() => this.output(chunk, meta));
+    }
+    async flush() { await new Promise(resolve => setTimeout(resolve)); }
+    close() { this.state = 'closed'; log.closedEncoders++; }
+  }
+  globalThis.VideoEncoder = FakeVideoEncoder;
+  globalThis.VideoFrame = class { constructor(canvas, { timestamp }) { this.timestamp = timestamp; } close() {} };
   class Output {
     constructor({ format, target }) { Object.assign(this, { format, target, state: 'pending' }); }
     addVideoTrack(source, meta) { log.frameRate = meta.frameRate; this.video = source; }
@@ -47,7 +63,8 @@ function fakeEnvironment({ decodable = true } = {}) {
     AudioBufferSink: class { async *buffers(from, to) { yield { buffer: { duration: to - from }, timestamp: from }; } },
     Output, BufferTarget: class { buffer = null; }, StreamTarget: class {},
     Mp4OutputFormat: class { mimeType = 'video/mp4'; fileExtension = '.mp4'; }, WebMOutputFormat: class {},
-    CanvasSource: class { async add(t) { log.frames.push(Math.round(t * 1000) / 1000); } close() {} },
+    EncodedPacket: { fromEncodedChunk: chunk => ({ timestamp: chunk.timestamp / 1e6, type: chunk.type }) },
+    EncodedVideoPacketSource: class { async add(packet, meta) { log.frames.push(Math.round(packet.timestamp * 1000) / 1000); if (meta) log.packetMeta.push(meta); } close() {} },
     AudioBufferSource: class { async add(buffer) { log.audio.push(buffer.length); } close() {} },
     getFirstEncodableVideoCodec: async () => 'avc', getFirstEncodableAudioCodec: async () => 'aac'
   };
@@ -78,7 +95,10 @@ test('offline export encodes every frame by timestamp, mixes audio in windows an
   assert.equal(result.extension, 'mp4');
   assert.equal(result.blob.type, 'video/mp4');
   assert.ok(env.log.finalized);
-  assert.equal(env.log.disposed, 1);
+  // One Input for the video slice and one for the audio mix, both released.
+  assert.equal(env.log.disposed, 2);
+  assert.equal(env.log.packetMeta.length, 1);
+  assert.equal(result.encoders, 1);
 });
 
 test('cancelling stops encoding and cancels the output; undecodable media raises a fallback error', async () => {
@@ -99,4 +119,68 @@ test('feature detection requires both WebCodecs encoders and decoders', () => {
   const fn = function () {};
   assert.equal(supportsOfflineExport({}), false);
   assert.equal(supportsOfflineExport({ VideoEncoder: fn, AudioEncoder: fn, VideoDecoder: fn, AudioDecoder: fn, OfflineAudioContext: fn }), true);
+});
+
+const longExport = (env, extra = {}) => {
+  const progress = [];
+  const run = renderOfflineExport({ clips: [video('a', 0, 12)], assets, duration: 12, settings: { width: 10, height: 10, fps: 10, bitrate: 1 },
+    drawText() {}, onProgress: p => progress.push(p), mediabunny: env.mb, createCanvas: env.createCanvas, ...extra });
+  return { run, progress };
+};
+const allFrames = Array.from({ length: 120 }, (_, i) => Math.round(i * 100) / 1000);
+
+test('slices split long exports on key frames; short exports stay in one slice', () => {
+  assert.deepEqual(planSlices(120, 10), [[0, 60], [60, 120]]);
+  assert.deepEqual(planSlices(1800, 30), [[0, 900], [900, 1800]]);
+  assert.deepEqual(planSlices(99, 10), [[0, 99]]);
+  assert.deepEqual(planSlices(130, 10), [[0, 60], [60, 130]]);
+  const runs = [{ clip: { id: 'a' }, first: 0, count: 50 }, { clip: { id: 'b' }, first: 50, count: 70 }];
+  assert.deepEqual(runsBetween(runs, 40, 60).map(r => [r.clip.id, r.first, r.count]), [['a', 40, 10], ['b', 50, 10]]);
+});
+
+test('decoder configs must match byte for byte before slices are concatenated', () => {
+  const config = (bytes, extra = {}) => ({ codec: 'avc1.640028', codedWidth: 1920, codedHeight: 1080, description: new Uint8Array(bytes), ...extra });
+  assert.ok(sameDecoderConfig(config([1, 2, 3]), config([1, 2, 3])));
+  assert.ok(sameDecoderConfig(config([1, 2, 3]), { ...config([]), description: new Uint8Array([9, 1, 2, 3]).subarray(1) }));
+  assert.ok(!sameDecoderConfig(config([1, 2, 3]), config([1, 2, 4])));
+  assert.ok(!sameDecoderConfig(config([1]), config([1], { codedWidth: 1280 })));
+  assert.ok(sameDecoderConfig({ codec: 'vp09.00.40.08' }, { codec: 'vp09.00.40.08' }));
+});
+
+test('two encoders run in parallel and their packets are muxed as one ordered track', async () => {
+  const env = fakeEnvironment();
+  const { run, progress } = longExport(env);
+  const result = await run;
+  assert.equal(result.encoders, 2);
+  assert.equal(env.log.encoders, 2);
+  assert.deepEqual(env.log.frames, allFrames);
+  assert.equal(env.log.packetMeta.length, 1);
+  assert.ok(env.log.keyFrames.includes(6e6), 'second slice starts on a key frame');
+  assert.equal(progress.at(-1), 1);
+  assert.equal(env.log.closedEncoders, 2);
+  assert.equal(env.log.requested.length, 120, 'each frame decoded once');
+});
+
+test('a slice whose stream config differs is re-rendered by the first slice, still one ordered track', async () => {
+  const env = fakeEnvironment({ descriptions: [1, 2] });
+  const { run, progress } = longExport(env);
+  const result = await run;
+  assert.equal(result.encoders, 1);
+  assert.deepEqual(env.log.frames, allFrames);
+  assert.equal(progress.at(-1), 1);
+  assert.ok(progress.every(p => p <= 1));
+});
+
+test('a second encoder that cannot start is not fatal', async () => {
+  const env = fakeEnvironment({ brokenEncoders: [1] });
+  const { run } = longExport(env);
+  const result = await run;
+  assert.equal(result.encoders, 1);
+  assert.deepEqual(env.log.frames, allFrames);
+});
+
+test('a failing first encoder fails the export and cancels the output', async () => {
+  const env = fakeEnvironment({ brokenEncoders: [0] });
+  await assert.rejects(longExport(env).run, /no hardware session/);
+  assert.ok(env.log.cancelled);
 });

@@ -955,7 +955,8 @@ async function startOfflineExport() {
       onProgress: (fraction) => reportOfflineProgress(fraction, duration, startedAt) });
     if (result.blob) downloadBlob(result.blob, exportFileName(result.extension));
     setExportProgress(1);
-    elements['export-status'].textContent = `Hoàn tất · ${result.isMp4 ? 'MP4 H.264' : 'WebM'} · ${Math.round((performance.now() - startedAt) / 1000)} giây`;
+    const streams = result.encoders > 1 ? ` · ${result.encoders} luồng mã hóa` : '';
+    elements['export-status'].textContent = `Hoàn tất · ${result.isMp4 ? 'MP4 H.264' : 'WebM'}${streams} · ${Math.round((performance.now() - startedAt) / 1000)} giây`;
     showToast(writable ? 'Đã lưu video vào tệp đã chọn.' : 'Video đã sẵn sàng để tải xuống.');
   } catch (error) {
     if (controller.signal.aborted || error?.name === 'AbortError') elements['export-status'].textContent = 'Đã hủy';
