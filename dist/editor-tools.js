@@ -84,8 +84,35 @@ export function shortcutFor(event, { editing = false, managedText = false, dialo
     return key === 'y' || event.shiftKey ? 'redo' : 'undo';
   }
   if (editing) return null;
-  if (modifier) return key === 'd' ? 'duplicate' : null;
+  if (modifier) return ({ d: 'duplicate', a: 'select-all' })[key] || null;
   if (key === 'delete' || key === 'backspace') return 'delete';
   if (event.repeat && [' ', 't', 's', '?'].includes(key)) return null;
-  return ({' ': 'play', t: 'text', s: 'split', arrowleft: event.shiftKey ? 'back-second' : 'back-frame', arrowright: event.shiftKey ? 'next-second' : 'next-frame', home: 'start', end: 'end', '?': 'help'})[key] || null;
+  return ({' ': 'play', t: 'text', s: 'split', arrowleft: event.shiftKey ? 'back-second' : 'back-frame', arrowright: event.shiftKey ? 'next-second' : 'next-frame', home: 'start', end: 'end', escape: 'deselect', '?': 'help'})[key] || null;
+}
+
+// Bulk delete groups clips the way the timeline shows them; text clips have no library asset.
+export const CLIP_KINDS = ['video', 'image', 'audio', 'text'];
+export const clipKind = (clip, assets) => clip.track === 'text' ? 'text' : assets.get(clip.assetId)?.kind ?? null;
+export function countClipKinds(clips, assets) {
+  const counts = Object.fromEntries(CLIP_KINDS.map(kind => [kind, 0]));
+  for (const clip of clips) {
+    const kind = clipKind(clip, assets);
+    if (kind in counts) counts[kind]++;
+  }
+  return counts;
+}
+
+// Shift+click: every clip on the clicked track that starts between the anchor and the clicked clip.
+export function clipRangeIds(clips, anchor, target) {
+  const from = Math.min(anchor.start, target.start), to = Math.max(anchor.start, target.start);
+  return clips.filter(clip => clip.track === target.track && clip.start >= from && clip.start <= to).map(clip => clip.id);
+}
+
+// Other modules (lyrics list, AI insert, undo) assign selectedId directly. A primary clip outside
+// the multi-selection means the user picked a single clip, so the selection collapses to it.
+export function reconcileSelection(selectedIds, selectedId, clips) {
+  const existing = new Set(clips.map(clip => clip.id));
+  if (!selectedId || !existing.has(selectedId)) return { selectedId: null, selectedIds: new Set() };
+  if (!selectedIds.has(selectedId)) return { selectedId, selectedIds: new Set([selectedId]) };
+  return { selectedId, selectedIds: new Set([...selectedIds].filter(id => existing.has(id))) };
 }

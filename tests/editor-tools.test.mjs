@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EditHistory, fitStage, revealTimeline, shortcutFor } from '../dist/editor-tools.js';
+import { EditHistory, fitStage, revealTimeline, shortcutFor, clipKind, countClipKinds, clipRangeIds, reconcileSelection } from '../dist/editor-tools.js';
 import { createTextClip } from '../dist/karaoke.js';
 const snapshot = (clips = [], selectedId = null, playhead = 0) => ({ data:{clips,projectName:'Test',globalMute:false},view:{selectedId,playhead} });
 const event = (key, extra = {}) => ({key,...extra});
@@ -103,4 +103,42 @@ test('timeline virtualization keeps one screen of overscan and filters clips by 
   assert.equal(clipInRange({ start: 70, duration: 11 }, range), true);
   assert.equal(clipInRange({ start: 140, duration: 3 }, range), false);
   assert.equal(visibleTimeRange({ scrollLeft: 0, viewportWidth: 1000, zoom: 50 }).start, 0);
+});
+
+test('multi-select shortcuts: Ctrl+A selects all, Esc clears, both stay off while typing', () => {
+  assert.equal(shortcutFor(event('a',{ctrlKey:true})),'select-all');
+  assert.equal(shortcutFor(event('A',{metaKey:true})),'select-all');
+  assert.equal(shortcutFor(event('a',{ctrlKey:true}),{editing:true}),null);
+  assert.equal(shortcutFor(event('Escape')),'deselect');
+  assert.equal(shortcutFor(event('Escape'),{editing:true}),null);
+});
+test('bulk delete counts clips by what the timeline shows, text clips included', () => {
+  const assets = new Map([['v',{kind:'video'}],['i',{kind:'image'}],['m',{kind:'audio'}]]);
+  const clips = [{id:1,track:'visual',assetId:'v'},{id:2,track:'visual',assetId:'v'},{id:3,track:'visual',assetId:'i'},
+    {id:4,track:'audio',assetId:'m'},{id:5,track:'text'},{id:6,track:'text'},{id:7,track:'visual',assetId:'gone'}];
+  assert.equal(clipKind(clips[2],assets),'image');
+  assert.equal(clipKind(clips[4],assets),'text');
+  assert.equal(clipKind(clips[6],assets),null);
+  assert.deepEqual(countClipKinds(clips,assets),{video:2,image:1,audio:1,text:2});
+});
+test('Shift+click range stays on the clicked track and works in both directions', () => {
+  const clips = [{id:'a',track:'text',start:1},{id:'b',track:'text',start:2},{id:'c',track:'text',start:3},
+    {id:'d',track:'text',start:4},{id:'x',track:'audio',start:2.5}];
+  assert.deepEqual(clipRangeIds(clips,clips[0],clips[2]),['a','b','c']);
+  assert.deepEqual(clipRangeIds(clips,clips[3],clips[1]),['b','c','d']);
+  // Anchor on another track: the range is the time span on the clicked track.
+  assert.deepEqual(clipRangeIds(clips,clips[4],clips[2]),['c']);
+});
+test('selection follows primary clip assignments made outside the timeline', () => {
+  const clips = [{id:'a'},{id:'b'},{id:'c'}];
+  const kept = reconcileSelection(new Set(['a','b']),'b',clips);
+  assert.deepEqual([...kept.selectedIds],['a','b']);
+  assert.equal(kept.selectedId,'b');
+  // Lyrics list or AI insert picked one clip: collapse to it.
+  assert.deepEqual([...reconcileSelection(new Set(['a','b']),'c',clips).selectedIds],['c']);
+  // Undo removed some selected clips: keep the rest.
+  assert.deepEqual([...reconcileSelection(new Set(['a','b','z']),'a',clips).selectedIds],['a','b']);
+  const cleared = reconcileSelection(new Set(['a']),'z',clips);
+  assert.equal(cleared.selectedId,null);
+  assert.equal(cleared.selectedIds.size,0);
 });

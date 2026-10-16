@@ -68,7 +68,10 @@ Lịch sử tối đa 100 bước hỗ trợ hoàn tác/làm lại việc thêm,
 | --- | --- |
 | Ctrl+Z | Hoàn tác |
 | Ctrl+Y hoặc Ctrl+Shift+Z | Làm lại |
-| Delete / Backspace | Xóa clip đã chọn |
+| Ctrl+nhấn clip | Chọn thêm / bỏ chọn một clip |
+| Shift+nhấn clip | Chọn cả dải clip trên cùng track |
+| Ctrl+A / Esc | Chọn tất cả / bỏ chọn |
+| Delete / Backspace | Xóa các clip đã chọn |
 | Ctrl+D | Nhân đôi clip |
 | T | Thêm chữ tại con trỏ |
 | S | Chia clip tại con trỏ |
@@ -77,6 +80,8 @@ Lịch sử tối đa 100 bước hỗ trợ hoàn tác/làm lại việc thêm,
 | Shift+← / Shift+→ | Tua 1 giây |
 | Home / End | Đầu / cuối dự án |
 | ? | Mở hướng dẫn phím tắt |
+
+Nút **Xóa nhanh** trên thanh timeline xóa một lần toàn bộ video, ảnh, âm thanh, chữ / karaoke, các clip đang chọn hoặc cả timeline; mỗi mục hiện số clip sẽ bị xóa. Tệp trong thư viện được giữ nguyên và cả lần xóa là một bước hoàn tác.
 
 Trên Mac dùng Command thay Ctrl. Khi đang gõ, phím xóa và mũi tên chỉ sửa nội dung ô nhập. Ctrl+Z trong ô nội dung lời hoặc tên dự án dùng lịch sử của ứng dụng; ô số dùng hoàn tác nhập liệu của trình duyệt. Phím tắt chỉnh sửa bị khóa khi xuất video hoặc mở hộp thoại.
 

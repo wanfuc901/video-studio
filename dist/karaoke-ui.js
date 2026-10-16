@@ -170,10 +170,10 @@ export function setupKaraoke({ state, elements, renderAll, renderTimeline, syncP
     renderList() {
       const list = $('lyrics-list'); list.replaceChildren();
       for (const c of state.clips.filter(c => c.track === 'text').sort((a, b) => a.start - b.start)) {
-        const button = document.createElement('button'); button.className = c.id === state.selectedId ? 'active' : '';
+        const button = document.createElement('button'); button.className = state.selectedIds.has(c.id) ? 'active' : '';
         const title = document.createElement('strong'); title.textContent = c.text || 'Chữ trống';
         const timing = document.createElement('small'); timing.textContent = `${c.start.toFixed(3)} → ${(c.start + c.duration).toFixed(3)}s`;
-        button.append(title, timing); button.onclick = () => { state.selectedId = c.id; seekTo(c.start); renderAll(); revealClip(c); elements['timeline-scroll'].focus({ preventScroll: true }); };
+        button.append(title, timing); button.onclick = () => { state.selectedId = c.id; state.selectedIds = new Set([c.id]); seekTo(c.start); renderAll(); revealClip(c); elements['timeline-scroll'].focus({ preventScroll: true }); };
         list.append(button);
       }
     },

@@ -1,7 +1,7 @@
 import { createSessionStore, SessionAutosaver, projectRecord } from './session-store.js';
 import { exportPreset, setupPrecisionWheel } from './precision-tools.js';
 import { setupAILyrics } from './ai-lyrics-ui.js';
-import { EditHistory, fitStage, revealTimeline, shortcutFor, visibleTimeRange, clipInRange } from './editor-tools.js';
+import { EditHistory, fitStage, revealTimeline, shortcutFor, visibleTimeRange, clipInRange, CLIP_KINDS, clipKind, countClipKinds, clipRangeIds, reconcileSelection } from './editor-tools.js';
 import { drawTextClips } from './karaoke.js';
 import { setupKaraoke } from './karaoke-ui.js';
 import { renderOfflineExport, supportsOfflineExport, loadMediabunny, estimatedExportBytes, ExportDecodeError } from './offline-export.js';
@@ -17,13 +17,16 @@ const AUTOSAVE_DELAY_MS = 700;
 const STREAM_EXPORT_BYTES = 400 * 1024 * 1024;
 const EXPORT_FRAME_WAIT_MS = 5000;
 const EXPORT_FRAME_POLL_MS = 30;
+const CLIP_KIND_NAMES = { video: 'clip video', image: 'clip ảnh', audio: 'clip âm thanh', text: 'câu chữ' };
+const BULK_MENU_GAP = 6;
+const VIEWPORT_MARGIN = 8;
 
 const elements = Object.fromEntries([
   'file-input', 'upload-zone', 'asset-list', 'asset-count', 'stage-add',
   'preview-video', 'preview-image', 'stage-placeholder', 'stage', 'play-button',
   'back-button', 'forward-button', 'global-mute', 'time-display', 'ruler',
   'timeline-scroll', 'timeline-canvas', 'video-track', 'audio-track', 'playhead',
-  'clip-count', 'timeline-duration', 'split-button', 'delete-button',
+  'clip-count', 'timeline-duration', 'split-button', 'delete-button', 'bulk-delete-menu', 'delete-inspector-label',
   'zoom-slider', 'inspector-empty', 'inspector-content', 'selected-icon',
   'selected-name', 'selected-type', 'clip-start', 'trim-in', 'trim-out',
   'audio-property', 'clip-mute', 'mute-switch', 'clip-volume', 'volume-value',
@@ -33,7 +36,8 @@ const elements = Object.fromEntries([
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
-  assets: new Map(), clips: [], selectedId: null, playhead: 0, zoom: 52,
+  // selectedId is the clip shown in the inspector; selectedIds holds every selected clip, including it.
+  assets: new Map(), clips: [], selectedId: null, selectedIds: new Set(), playhead: 0, zoom: 52,
   playing: false, lastFrame: 0, globalMute: false, activeVisualId: null,
   audioElements: new Map(), audioGraph: null, exporting: false,
   exportCancelled: false, recorder: null, exportStream: null,
@@ -55,7 +59,7 @@ function saveSession() { if (!restoringSession) { if(sessionAutosaver)sessionAut
 
 function snapshotProject() {
   return { data: { clips: state.clips, projectName: elements['project-name'].value, globalMute: state.globalMute },
-    view: { selectedId: state.selectedId, playhead: state.playhead } };
+    view: { selectedId: state.selectedId, selectedIds: [...state.selectedIds], playhead: state.playhead } };
 }
 
 function recordEdit(group = null) {
@@ -72,12 +76,11 @@ function restoreEdit(direction) {
   const snapshot = direction === 'undo' ? editHistory.undo() : editHistory.redo();
   if (!snapshot) return;
   pausePlayback();
-  for (const [id, audio] of state.audioElements) {
-    if (!snapshot.data.clips.some(c => c.id === id && c.track === 'audio')) {
-      audio.pause(); audio.removeAttribute('src'); audio.load(); state.audioElements.delete(id);
-    }
+  for (const id of [...state.audioElements.keys()]) {
+    if (!snapshot.data.clips.some(c => c.id === id && c.track === 'audio')) releaseAudio(id);
   }
   state.clips = snapshot.data.clips; state.selectedId = snapshot.view.selectedId;
+  state.selectedIds = new Set(snapshot.view.selectedIds ?? []);
   state.playhead = clamp(snapshot.view.playhead, 0, projectDuration());
   state.globalMute = snapshot.data.globalMute; state.activeVisualId = null; state.loopTextId = null;
   elements['project-name'].value = snapshot.data.projectName;
@@ -130,6 +133,8 @@ function handleShortcut(event) {
   if (state.drag) stopClipDrag();
   if (action === 'undo' || action === 'redo') { restoreEdit(action); return; }
   if (action === 'delete') deleteSelectedClip();
+  if (action === 'select-all') selectClips(state.clips.map((clip) => clip.id), state.selectedId ?? state.clips[0]?.id);
+  if (action === 'deselect') selectClips([], null);
   if (action === 'duplicate') duplicateSelectedClip();
   if (action === 'split') splitSelectedClip();
   if (action === 'text') karaokeUI.addText();
@@ -281,7 +286,7 @@ function addAssetToTimeline(assetId) {
 function makeClipElement(clip) {
   const asset = getAsset(clip);
   const clipElement = document.createElement('div');
-  clipElement.className = `clip ${asset.kind}${clip.id === state.selectedId ? ' selected' : ''}`;
+  clipElement.className = `clip ${asset.kind}${state.selectedIds.has(clip.id) ? ' selected' : ''}`;
   clipElement.dataset.clipId = clip.id;
   clipElement.style.left = `${clip.start * state.zoom}px`;
   clipElement.style.width = `${Math.max(clip.duration * state.zoom, 12)}px`;
@@ -343,6 +348,7 @@ function renderRuler(duration, range) {
 
 // Only clips near the viewport are in the DOM; long songs with hundreds of lines stay responsive.
 function renderTimeline() {
+  syncSelection();
   karaokeUI.renderList();
   const duration = Math.max(30, Math.ceil(projectDuration() + 5));
   const timelineWidth = Math.max(elements['timeline-scroll'].clientWidth, TRACK_LABEL_WIDTH + duration * state.zoom);
@@ -356,7 +362,8 @@ function renderTimeline() {
     container.style.backgroundSize = `${state.zoom}px 100%`;
     container.replaceChildren(...state.clips.filter((clip) => clip.track === track && (clip.id === draggedId || clipInRange(clip, range))).map(makeClipElement));
   }
-  elements['clip-count'].textContent = `${state.clips.length} clip`;
+  const selectedCount = state.selectedIds.size;
+  elements['clip-count'].textContent = `${state.clips.length} clip${selectedCount > 1 ? ` · đang chọn ${selectedCount}` : ''}`;
   elements['timeline-duration'].textContent = `Tổng thời lượng ${formatTime(projectDuration())}`;
   renderPlayhead();
 }
@@ -382,7 +389,7 @@ function renderInspector() {
   elements['inspector-empty'].hidden = Boolean(clip);
   elements['inspector-content'].hidden = !clip;
   elements['split-button'].disabled = !clip;
-  elements['delete-button'].disabled = !clip;
+  renderDeleteLabels();
   karaokeUI.render(clip);
   if (!clip) return;
   const asset = getAsset(clip);
@@ -544,15 +551,128 @@ function splitSelectedClip() {
   showToast('Đã cắt clip tại vị trí con trỏ.');
 }
 
-function deleteSelectedClip() {
-  if (!state.selectedId) return;
-  state.clips = state.clips.filter((clip) => clip.id !== state.selectedId);
-  const audio = state.audioElements.get(state.selectedId);
-  if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); state.audioElements.delete(state.selectedId); }
-  state.selectedId = null;
+function syncSelection() {
+  const { selectedId, selectedIds } = reconcileSelection(state.selectedIds, state.selectedId, state.clips);
+  state.selectedId = selectedId;
+  state.selectedIds = selectedIds;
+}
+
+function selectClips(ids, primaryId) {
+  state.selectedIds = new Set(ids);
+  state.selectedId = state.selectedIds.has(primaryId) ? primaryId : [...state.selectedIds].at(-1) ?? null;
+  // Clip data is unchanged, so this only refreshes the history view: undo after a bulk delete
+  // brings back the whole selection, not just the inspected clip.
+  recordEdit();
+  renderTimeline();
+  renderInspector();
+}
+
+// Ctrl/⌘+click toggles one clip; Shift+click adds the clips between the inspected clip and this one.
+function extendSelection(clip, asRange) {
+  syncSelection();
+  const anchor = getSelectedClip();
+  const ids = new Set(state.selectedIds);
+  if (asRange && anchor) {
+    for (const id of clipRangeIds(state.clips, anchor, clip)) ids.add(id);
+    selectClips(ids, anchor.id);
+    return;
+  }
+  if (ids.has(clip.id)) ids.delete(clip.id); else ids.add(clip.id);
+  selectClips(ids, ids.has(clip.id) ? clip.id : state.selectedId);
+}
+
+function renderDeleteLabels() {
+  const count = state.selectedIds.size;
+  const button = elements['delete-button'];
+  button.disabled = count === 0;
+  button.querySelector('span').textContent = count > 1 ? `Xóa ${count}` : 'Xóa';
+  button.title = count > 1 ? `Xóa ${count} clip đã chọn` : 'Xóa clip đã chọn';
+  elements['delete-inspector-label'].textContent = count > 1 ? `Xóa ${count} clip đã chọn` : 'Xóa clip khỏi timeline';
+}
+
+function releaseAudio(id) {
+  const audio = state.audioElements.get(id);
+  if (!audio) return;
+  audio.pause(); audio.removeAttribute('src'); audio.load();
+  // A real-time export routes the element through the audio graph; a connected source node keeps it alive.
+  state.audioGraph?.sources.get(audio)?.disconnect();
+  state.audioElements.delete(id);
+}
+
+// Removes clips only; library media stays, and the whole removal is one undo step.
+function deleteClips(shouldDelete, description) {
+  if (state.exporting) return;
+  if (state.drag) stopClipDrag();
+  const removedIds = new Set(state.clips.filter(shouldDelete).map((clip) => clip.id));
+  if (!removedIds.size) { showToast('Không có clip nào để xóa.'); return; }
+  state.clips = state.clips.filter((clip) => !removedIds.has(clip.id));
+  for (const id of removedIds) releaseAudio(id);
+  if (removedIds.has(state.loopTextId)) state.loopTextId = null;
+  state.selectedIds = new Set([...state.selectedIds].filter((id) => !removedIds.has(id)));
+  if (removedIds.has(state.selectedId)) state.selectedId = [...state.selectedIds].at(-1) ?? null;
   state.playhead = Math.min(state.playhead, projectDuration());
   renderAll();
-  showToast('Đã xóa clip khỏi timeline.');
+  showToast(`Đã xóa ${removedIds.size} ${description}. Ctrl+Z để hoàn tác.`);
+}
+
+function deleteSelectedClip() {
+  syncSelection();
+  if (!state.selectedIds.size) return;
+  const selected = new Set(state.selectedIds);
+  deleteClips((clip) => selected.has(clip.id), 'clip đã chọn');
+}
+
+function deleteClipsOfKind(kind) {
+  if (kind === 'all') { deleteClips(() => true, 'clip, timeline đã trống'); return; }
+  if (!CLIP_KINDS.includes(kind)) return;
+  deleteClips((clip) => clipKind(clip, state.assets) === kind, CLIP_KIND_NAMES[kind]);
+}
+
+function renderBulkMenu() {
+  syncSelection();
+  const counts = { ...countClipKinds(state.clips, state.assets), selected: state.selectedIds.size, all: state.clips.length };
+  for (const button of elements['bulk-delete-menu'].querySelectorAll('[data-delete]')) {
+    const count = counts[button.dataset.delete] ?? 0;
+    button.querySelector('.bulk-count').textContent = String(count);
+    button.disabled = count === 0;
+  }
+}
+
+// The timeline usually sits at the bottom of the window, so the menu opens upward, right-aligned to
+// its button. When the toolbar is near the top (narrow, scrolled layouts) it flips below instead.
+const bulkMenuAnchor = () => document.getElementById('bulk-delete-button').getBoundingClientRect();
+
+function placeBulkMenuAbove() {
+  const anchor = bulkMenuAnchor();
+  const menu = elements['bulk-delete-menu'];
+  menu.style.right = `${Math.max(VIEWPORT_MARGIN, window.innerWidth - anchor.right)}px`;
+  menu.style.top = 'auto';
+  menu.style.bottom = `${Math.max(VIEWPORT_MARGIN, window.innerHeight - anchor.top + BULK_MENU_GAP)}px`;
+}
+
+// Runs once the menu is open: a closed popover has no size to measure.
+function flipBulkMenuIfClipped() {
+  const menu = elements['bulk-delete-menu'];
+  if (menu.getBoundingClientRect().top >= VIEWPORT_MARGIN) return;
+  menu.style.bottom = 'auto';
+  menu.style.top = `${bulkMenuAnchor().bottom + BULK_MENU_GAP}px`;
+}
+
+function bindBulkDelete() {
+  const menu = elements['bulk-delete-menu'];
+  menu.addEventListener('beforetoggle', (event) => {
+    if (event.newState !== 'open') return;
+    renderBulkMenu();
+    placeBulkMenuAbove();
+  });
+  menu.addEventListener('toggle', (event) => { if (event.newState === 'open') flipBulkMenuIfClipped(); });
+  menu.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-delete]');
+    if (!button || button.disabled) return;
+    menu.hidePopover();
+    if (button.dataset.delete === 'selected') deleteSelectedClip();
+    else deleteClipsOfKind(button.dataset.delete);
+  });
 }
 
 function updateSelectedTiming() {
@@ -580,7 +700,9 @@ function startClipDrag(event) {
   if (!clip) return;
   event.preventDefault();
   elements['timeline-scroll'].focus({ preventScroll: true });
+  if (event.ctrlKey || event.metaKey || event.shiftKey) { extendSelection(clip, event.shiftKey); return; }
   state.selectedId = clip.id;
+  state.selectedIds = new Set([clip.id]);
   recordEdit();
   state.drag = { id: clip.id, x: event.clientX, pointerX: event.clientX, start: clip.start,
     sourceStart: clip.sourceStart, duration: clip.duration,
@@ -908,6 +1030,7 @@ function bindEvents() {
   elements['split-button'].addEventListener('click', splitSelectedClip);
   elements['delete-button'].addEventListener('click', deleteSelectedClip);
   elements['delete-inspector'].addEventListener('click', deleteSelectedClip);
+  bindBulkDelete();
   elements['zoom-slider'].addEventListener('input', (event) => { state.zoom = Number(event.target.value); renderTimeline(); });
   for (const id of ['clip-start', 'trim-in', 'trim-out']) elements[id].addEventListener('change', updateSelectedTiming);
   elements['clip-mute'].addEventListener('click', () => { const clip = getSelectedClip(); if (!clip) return; clip.muted = !clip.muted; recordEdit(); renderInspector(); syncPreview(); });
@@ -926,7 +1049,7 @@ function bindEvents() {
   elements['project-name'].addEventListener('input', () => recordEdit('project-name'));
   document.addEventListener('focusout', () => editHistory.endGroup());
   elements['timeline-scroll'].tabIndex = 0;
-  elements['timeline-scroll'].setAttribute('aria-label', 'Timeline. Delete xóa clip, Ctrl Z hoàn tác, S chia clip, T thêm chữ.');
+  elements['timeline-scroll'].setAttribute('aria-label', 'Timeline. Ctrl hoặc Shift khi nhấn clip để chọn nhiều, Ctrl A chọn tất cả, Delete xóa clip đã chọn, Ctrl Z hoàn tác, S chia clip, T thêm chữ.');
   const observer = new ResizeObserver(resizeStage); observer.observe(document.querySelector('.stage-wrap'));
   resizeStage();
   elements['export-button'].addEventListener('click', () => {

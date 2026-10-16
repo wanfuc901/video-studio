@@ -45,3 +45,12 @@
 .ai-pro-options{display:flex;flex-wrap:wrap;gap:8px 16px;margin:10px 0 0 22px;font-size:11px;color:var(--muted)}
 .ai-pro-options .check-inline{display:inline-flex;gap:6px;align-items:center}
 .ai-review-timing{color:var(--audio)}
+.menu-caret{font-size:9px;color:var(--muted)}
+.bulk-menu{position:fixed;inset:auto;margin:0;min-width:240px;max-height:calc(100vh - 16px);overflow-y:auto;padding:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);color:var(--text)}
+.bulk-menu-title{margin:4px 8px 6px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.bulk-menu button{display:flex;align-items:center;gap:9px;width:100%;padding:8px;border:0;border-radius:6px;background:transparent;color:inherit;font-size:12px;text-align:left}
+.bulk-menu button:hover:not(:disabled),.bulk-menu button:focus-visible{background:var(--panel-soft)}
+.bulk-menu button .icon{width:14px;height:14px;flex:none}
+.bulk-count{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted)}
+.bulk-menu .bulk-all{margin-top:4px;color:var(--danger)}
+.bulk-menu-note{margin:6px 8px 2px;font-size:11px;color:var(--faint)}
