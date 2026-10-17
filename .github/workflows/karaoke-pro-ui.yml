@@ -1,0 +1,24 @@
+name: Karaoke Pro Studio UI
+on:
+  push:
+    branches:
+      - feat/karaoke-pro-studio-redesign
+  pull_request:
+    branches:
+      - feat/karaoke-pro
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript editor tests
+        run: npm test
+      - name: Install minimal Python test dependencies
+        run: python -m pip install 'numpy>=1.26,<3'
+      - name: Python editor tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
