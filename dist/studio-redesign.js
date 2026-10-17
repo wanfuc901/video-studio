@@ -9,6 +9,7 @@ function setupStudioNavigation() {
     ['media', '▦ Thư viện'],
     ['text', 'T+ Thêm chữ'],
     ['align', '✦ AI ráp lời'],
+    ['transcribe', '♫ Tạo lời AI'],
     ['timeline', '≡ Timeline'],
     ['help', '⌨ Phím tắt']
   ];
@@ -28,13 +29,14 @@ function setupStudioNavigation() {
       media: '.media-panel',
       text: '#add-text',
       align: '#align-lyrics-button',
+      transcribe: '#ai-lyrics-button',
       timeline: '#timeline-scroll',
       help: '#shortcuts-button'
     }[action];
     if (!target) return;
     const element = document.querySelector(target);
     if (!element) return;
-    if (['text', 'align', 'help'].includes(action)) element.click();
+    if (['text', 'align', 'transcribe', 'help'].includes(action)) element.click();
     else element.scrollIntoView({behavior:'smooth',block:'nearest',inline:'nearest'});
   });
 }
